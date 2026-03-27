@@ -7,7 +7,7 @@
     "storacha-export": "./bin/storacha-export.js"
   },
   "scripts": {
-    "test": "node --test test/**/*.test.js",
+    "test": "node --test 'test/**/*.test.js' 'test/*.test.js'",
     "start": "node bin/storacha-export.js"
   },
   "license": "AGPL-3.0-or-later",
