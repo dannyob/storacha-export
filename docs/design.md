@@ -46,7 +46,7 @@ On startup:
 When run without command-line options (`storacha-export` with no args), present an interactive wizard using `inquirer`:
 
 1. Credential detection / login
-2. Space selection (all, or pick specific spaces)
+2. Space selection — checkbox list of all available spaces with name and size, select/deselect individually (default: all selected)
 3. Backend selection (checkboxes: local files, kubo, ipfs-cluster)
 4. Backend configuration (output dir, API endpoints, etc.)
 5. Concurrency setting
@@ -172,8 +172,12 @@ storacha-export \
 storacha-export --continue \
   --backend kubo --kubo-api /ip4/127.0.0.1/tcp/5001
 
-# Export specific space only
-storacha-export --space "Smithsonian" \
+# Export specific spaces (repeatable)
+storacha-export --space "Smithsonian" --space "DPLA" \
+  --backend kubo --kubo-api /ip4/127.0.0.1/tcp/5001
+
+# Export all except specific spaces
+storacha-export --exclude-space "BlueSky_Backups" \
   --backend kubo --kubo-api /ip4/127.0.0.1/tcp/5001
 
 # Dry run — enumerate only, show what would be exported
