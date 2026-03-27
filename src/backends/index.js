@@ -8,9 +8,11 @@
  */
 
 import { LocalBackend } from './local.js'
+import { KuboBackend } from './kubo.js'
 
 const BACKENDS = {
   local: LocalBackend,
+  kubo: KuboBackend,
 }
 
 /**
