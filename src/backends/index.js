@@ -9,10 +9,12 @@
 
 import { LocalBackend } from './local.js'
 import { KuboBackend } from './kubo.js'
+import { ClusterBackend } from './cluster.js'
 
 const BACKENDS = {
   local: LocalBackend,
   kubo: KuboBackend,
+  cluster: ClusterBackend,
 }
 
 /**
