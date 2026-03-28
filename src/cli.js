@@ -204,6 +204,25 @@ async function _main(argv) {
   }
   queue = new JobQueue(dbPath)
 
+  // --- Collect space sizes and sort smallest first ---
+  const sizeSpinner = createSpinner('Collecting space sizes...')
+  try {
+    for (const space of selectedSpaces) {
+      client.setCurrentSpace(space.did)
+      const usage = await client.capability.usage.report()
+      let totalBytes = 0
+      for (const [, report] of Object.entries(usage)) {
+        totalBytes += report?.size?.final || 0
+      }
+      space.totalBytes = totalBytes
+      queue.upsertSpace({ did: space.did, name: space.name, totalUploads: 0, totalBytes })
+    }
+    selectedSpaces.sort((a, b) => (a.totalBytes || 0) - (b.totalBytes || 0))
+    sizeSpinner.succeed(`Collected sizes — smallest first: ${selectedSpaces.map(s => `${s.name} (${filesize(s.totalBytes || 0)})`).join(', ')}`)
+  } catch {
+    sizeSpinner.succeed('Could not collect sizes — using default order')
+  }
+
   // --- Enumerate ---
   const enumSpinner = createSpinner('Enumerating uploads...')
   let enumCount = 0
