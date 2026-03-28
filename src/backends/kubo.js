@@ -1,4 +1,32 @@
-import { Readable } from 'node:stream'
+import { Readable, PassThrough } from 'node:stream'
+
+const BOUNDARY = '----StorachaExportBoundary'
+
+/**
+ * Build a streaming multipart body without buffering.
+ * Yields: preamble, then pipes the CAR stream, then yields epilogue.
+ */
+function multipartStream(fieldName, filename, carStream) {
+  const out = new PassThrough()
+
+  const preamble = Buffer.from(
+    `--${BOUNDARY}\r\n` +
+    `Content-Disposition: form-data; name="${fieldName}"; filename="${filename}"\r\n` +
+    `Content-Type: application/vnd.ipld.car\r\n` +
+    `\r\n`
+  )
+  const epilogue = Buffer.from(`\r\n--${BOUNDARY}--\r\n`)
+
+  out.write(preamble)
+  carStream.on('data', (chunk) => out.write(chunk))
+  carStream.on('end', () => {
+    out.write(epilogue)
+    out.end()
+  })
+  carStream.on('error', (err) => out.destroy(err))
+
+  return out
+}
 
 export class KuboBackend {
   constructor({ apiUrl }) {
@@ -29,19 +57,33 @@ export class KuboBackend {
   }
 
   async importCar(rootCid, stream) {
-    // Convert Node readable to a fetch-compatible body
+    // Stream multipart form data without buffering the entire CAR
+    const body = multipartStream('file', `${rootCid}.car`, stream)
+
     const res = await fetch(`${this.apiUrl}/api/v0/dag/import?pin-roots=true`, {
       method: 'POST',
-      body: stream,
-      headers: { 'Content-Type': 'application/vnd.ipld.car' },
+      body: body,
+      headers: {
+        'Content-Type': `multipart/form-data; boundary=${BOUNDARY}`,
+      },
       duplex: 'half',
     })
     if (!res.ok) {
       const text = await res.text()
       throw new Error(`kubo dag/import failed (${res.status}): ${text}`)
     }
-    // dag/import returns ndjson — consume it
-    await res.text()
+    // dag/import returns ndjson with root pin status — check for errors
+    const text = await res.text()
+    for (const line of text.trim().split('\n').filter(Boolean)) {
+      try {
+        const result = JSON.parse(line)
+        if (result.Root?.PinErrorMsg) {
+          throw new Error(`Pin failed for ${rootCid}: ${result.Root.PinErrorMsg}`)
+        }
+      } catch (e) {
+        if (e.message.startsWith('Pin failed')) throw e
+      }
+    }
   }
 
   async close() {}
