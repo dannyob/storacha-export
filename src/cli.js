@@ -207,19 +207,34 @@ async function _main(argv) {
   // --- Collect space sizes and sort smallest first ---
   const sizeSpinner = createSpinner('Collecting space sizes...')
   try {
-    for (const space of selectedSpaces) {
-      client.setCurrentSpace(space.did)
-      const usage = await client.capability.usage.report()
-      let totalBytes = 0
-      for (const [, report] of Object.entries(usage)) {
-        totalBytes += report?.size?.final || 0
+    const now = new Date()
+    const from = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - 1, 1))
+    const period = { from, to: now }
+    const spaceSizes = new Map()
+
+    // Walk subscriptions to get usage per space (same approach as storacha CLI)
+    for (const account of Object.values(client.accounts())) {
+      const subs = await client.capability.subscription.list(account.did())
+      for (const { consumers } of subs.results) {
+        for (const spaceDid of consumers) {
+          try {
+            const result = await client.capability.usage.report(spaceDid, period)
+            for (const [, report] of Object.entries(result)) {
+              const prev = spaceSizes.get(spaceDid) || 0
+              spaceSizes.set(spaceDid, prev + (report?.size?.final || 0))
+            }
+          } catch { /* skip spaces we can't query */ }
+        }
       }
-      space.totalBytes = totalBytes
-      queue.upsertSpace({ did: space.did, name: space.name, totalUploads: 0, totalBytes })
+    }
+
+    for (const space of selectedSpaces) {
+      space.totalBytes = spaceSizes.get(space.did) || 0
+      queue.upsertSpace({ did: space.did, name: space.name, totalUploads: 0, totalBytes: space.totalBytes })
     }
     selectedSpaces.sort((a, b) => (a.totalBytes || 0) - (b.totalBytes || 0))
     sizeSpinner.succeed(`Collected sizes — smallest first: ${selectedSpaces.map(s => `${s.name} (${filesize(s.totalBytes || 0)})`).join(', ')}`)
-  } catch {
+  } catch (e) {
     sizeSpinner.succeed('Could not collect sizes — using default order')
   }
 
