@@ -7,8 +7,6 @@ const BOUNDARY = '----StorachaExportBoundary'
  * Yields: preamble, then pipes the CAR stream, then yields epilogue.
  */
 function multipartStream(fieldName, filename, carStream) {
-  const out = new PassThrough()
-
   const preamble = Buffer.from(
     `--${BOUNDARY}\r\n` +
     `Content-Disposition: form-data; name="${fieldName}"; filename="${filename}"\r\n` +
@@ -17,15 +15,18 @@ function multipartStream(fieldName, filename, carStream) {
   )
   const epilogue = Buffer.from(`\r\n--${BOUNDARY}--\r\n`)
 
-  out.write(preamble)
-  carStream.on('data', (chunk) => out.write(chunk))
-  carStream.on('end', () => {
-    out.write(epilogue)
-    out.end()
-  })
-  carStream.on('error', (err) => out.destroy(err))
+  // Use an async generator to properly respect backpressure:
+  // the consumer (fetch) pulls chunks only as fast as it can send them,
+  // which in turn applies backpressure to the carStream.
+  async function* generate() {
+    yield preamble
+    for await (const chunk of carStream) {
+      yield chunk
+    }
+    yield epilogue
+  }
 
-  return out
+  return Readable.from(generate())
 }
 
 export class KuboBackend {
