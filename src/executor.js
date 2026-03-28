@@ -42,12 +42,16 @@ export async function executeJob(job, backends, queue, options = {}) {
         throw new Error(`Gateway returned ${res.status}: ${res.statusText}`)
       }
 
-      // Wrap stream to count bytes as they flow through
-      let byteCount = 0
-      const countingStream = new PassThrough()
-      countingStream.on('data', chunk => { byteCount += chunk.length })
-
       const nodeStream = Readable.fromWeb(res.body)
+
+      // Count bytes via a wrapper that doesn't interfere with stream consumption
+      let byteCount = 0
+      const countingStream = new PassThrough({
+        transform(chunk, encoding, callback) {
+          byteCount += chunk.length
+          callback(null, chunk)
+        }
+      })
       nodeStream.pipe(countingStream)
 
       if (backends.length === 1) {
