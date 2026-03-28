@@ -42,21 +42,25 @@ export async function executeJob(job, backends, queue, options = {}) {
         throw new Error(`Gateway returned ${res.status}: ${res.statusText}`)
       }
 
+      // Wrap stream to count bytes as they flow through
+      let byteCount = 0
+      const countingStream = new PassThrough()
+      countingStream.on('data', chunk => { byteCount += chunk.length })
+
       const nodeStream = Readable.fromWeb(res.body)
+      nodeStream.pipe(countingStream)
 
       if (backends.length === 1) {
-        // Direct pipe — no tee overhead
-        await backends[0].importCar(job.root_cid, nodeStream)
+        await backends[0].importCar(job.root_cid, countingStream)
       } else {
-        // Tee to multiple backends
         const streams = backends.map(() => new PassThrough())
-        nodeStream.on('data', chunk => {
+        countingStream.on('data', chunk => {
           for (const s of streams) s.write(chunk)
         })
-        nodeStream.on('end', () => {
+        countingStream.on('end', () => {
           for (const s of streams) s.end()
         })
-        nodeStream.on('error', err => {
+        countingStream.on('error', err => {
           for (const s of streams) s.destroy(err)
         })
 
@@ -65,9 +69,7 @@ export async function executeJob(job, backends, queue, options = {}) {
         )
       }
 
-      // Count bytes (approximate — from content-length if available)
-      const bytes = parseInt(res.headers.get('content-length') || '0', 10)
-      queue.markDone(job.root_cid, job.backend, bytes)
+      queue.markDone(job.root_cid, job.backend, byteCount)
       onProgress?.({ type: 'done', rootCid: job.root_cid, bytes })
       return
 
