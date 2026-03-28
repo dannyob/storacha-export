@@ -248,7 +248,7 @@ export async function main(argv) {
           rate: info.bytes ? filesize(info.bytes) : '',
         })
       } else if (info.type === 'error') {
-        // Errors logged but we continue
+        console.error(`\n  ERROR ${info.rootCid}: ${info.error}`)
       } else if (info.type === 'complete') {
         bar.stop()
       }
@@ -275,6 +275,13 @@ export async function main(argv) {
       backends: backends.map(b => b.name).join(', '),
     })
   } else if (finalStats.error > 0) {
+    const errors = queue.db.prepare(
+      'SELECT root_cid, space_name, backend, error_msg FROM jobs WHERE status = ?'
+    ).all('error')
+    console.log(`\nFailed exports:`)
+    for (const e of errors) {
+      console.log(`  ${e.space_name} ${e.root_cid} → ${e.backend}: ${e.error_msg}`)
+    }
     console.log(`\nRe-run with --continue to retry failed exports.`)
   }
 
