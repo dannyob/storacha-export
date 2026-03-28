@@ -74,7 +74,7 @@ export async function executeJob(job, backends, queue, options = {}) {
       }
 
       queue.markDone(job.root_cid, job.backend, byteCount)
-      onProgress?.({ type: 'done', rootCid: job.root_cid, bytes })
+      onProgress?.({ type: 'done', rootCid: job.root_cid, bytes: byteCount })
       return
 
     } catch (err) {
