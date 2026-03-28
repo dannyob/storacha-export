@@ -19,6 +19,20 @@ function filesize(bytes) {
 }
 
 export async function main(argv) {
+  try {
+    await _main(argv)
+  } catch (err) {
+    if (err.name === 'ExitPromptError' || err.message?.includes('force closed')) {
+      // Ctrl+C during wizard — reset terminal and exit cleanly
+      process.stdout.write('\x1B[?25h') // show cursor
+      console.log('\nExiting.')
+      process.exit(0)
+    }
+    throw err
+  }
+}
+
+async function _main(argv) {
   const program = new Command()
 
   program
@@ -122,10 +136,10 @@ export async function main(argv) {
       { name: 'IPFS Cluster', value: 'cluster' },
     ]
     const selectedBackends = await checkbox({
-      message: 'Select export backends:',
+      message: 'Select export backends (Space to toggle, Enter to confirm):',
       choices: backendChoices,
+      required: true,
     })
-
     for (const name of selectedBackends) {
       if (name === 'local') {
         const dir = await input({
