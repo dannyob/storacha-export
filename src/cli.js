@@ -240,7 +240,9 @@ async function _main(argv) {
         const subs = await client.capability.subscription.list(account.did())
         for (const { consumers } of subs.results) {
           for (const spaceDid of consumers) {
-            const spaceName = selectedSpaces.find(s => s.did === spaceDid)?.name || spaceDid.slice(0, 20)
+            const space = selectedSpaces.find(s => s.did === spaceDid)
+            if (!space) continue // skip spaces not in selection
+            const spaceName = space.name
             console.log(`  Querying ${spaceName}...`)
             try {
               const result = await client.capability.usage.report(spaceDid, period)
@@ -268,6 +270,7 @@ async function _main(argv) {
   // --- Enumerate ---
   const enumSpinner = createSpinner('Enumerating uploads...')
   let enumCount = 0
+  let jobBatch = []
 
   for await (const upload of enumerateUploads(client, selectedSpaces, {
     onProgress: (msg) => { enumSpinner.text = msg },
@@ -285,16 +288,23 @@ async function _main(argv) {
     }
 
     for (const be of backends) {
-      queue.addJob({
+      jobBatch.push({
         rootCid: upload.rootCid,
         spaceDid: upload.spaceDid,
         spaceName: upload.spaceName,
         backend: be.name,
       })
     }
+    if (jobBatch.length >= 500) {
+      queue.addJobsBatch(jobBatch)
+      jobBatch = []
+    }
     enumCount++
   }
 
+  if (jobBatch.length > 0) {
+    queue.addJobsBatch(jobBatch)
+  }
   enumSpinner.succeed(`Enumerated ${enumCount} uploads to export`)
 
   if (opts.dryRun) {
@@ -310,10 +320,7 @@ async function _main(argv) {
   // --- Execute ---
   const stats = queue.getStats()
   console.log(`\nJob queue: ${stats.total} total, ${stats.done} done, ${stats.error} errors, ${stats.pending} pending`)
-  // Count only jobs for selected spaces
-  const selectedPending = queue.db.prepare(
-    `SELECT COUNT(*) as count FROM jobs WHERE status = 'pending' AND space_name IN (${selectedSpaces.map(() => '?').join(',')})`
-  ).get(...selectedSpaces.map(s => s.name))?.count || 0
+  const selectedPending = queue.getPendingCountForSpaces(selectedSpaces.map(s => s.name))
   console.log(`Selected spaces: ${selectedPending} pending`)
   const bar = createProgressBar(selectedPending)
   let completed = 0
@@ -355,16 +362,11 @@ async function _main(argv) {
     printRooster({
       total: finalStats.done,
       spaces: selectedSpaces.length,
-      bytes: filesize(
-        queue.db.prepare('SELECT SUM(bytes_transferred) as total FROM jobs WHERE status = ?')
-          .get('done')?.total || 0
-      ),
+      bytes: filesize(queue.getTotalBytesTransferred()),
       backends: backends.map(b => b.name).join(', '),
     })
   } else if (finalStats.error > 0) {
-    const errors = queue.db.prepare(
-      'SELECT root_cid, space_name, backend, error_msg FROM jobs WHERE status = ?'
-    ).all('error')
+    const errors = queue.getErrors()
     console.log(`\nFailed exports:`)
     for (const e of errors) {
       console.log(`  ${e.space_name} ${e.root_cid} → ${e.backend}: ${e.error_msg}`)
