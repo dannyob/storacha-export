@@ -204,6 +204,14 @@ async function _main(argv) {
   }
   queue = new JobQueue(dbPath)
 
+  // Reset any jobs stuck in_progress from a crashed previous run
+  if (opts.continue) {
+    const reset = queue.resetInProgress()
+    if (reset.changes > 0) {
+      console.log(`Reset ${reset.changes} stuck in-progress job(s) from previous run.`)
+    }
+  }
+
   // --- Collect space sizes and sort smallest first ---
   const sizeSpinner = createSpinner('Collecting space sizes...')
   try {
