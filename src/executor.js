@@ -52,11 +52,17 @@ export async function executeJob(job, backends, queue, options = {}) {
 
       const nodeStream = Readable.fromWeb(res.body)
 
-      // Count bytes via a wrapper that doesn't interfere with stream consumption
+      // Count bytes and log progress periodically for large downloads
       let byteCount = 0
+      let lastProgressLog = Date.now()
       const countingStream = new PassThrough({
         transform(chunk, encoding, callback) {
           byteCount += chunk.length
+          const now = Date.now()
+          if (now - lastProgressLog > 30000) { // every 30s
+            onProgress?.({ type: 'downloading', rootCid: job.root_cid, bytes: byteCount })
+            lastProgressLog = now
+          }
           callback(null, chunk)
         }
       })

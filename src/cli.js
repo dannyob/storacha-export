@@ -323,6 +323,8 @@ async function _main(argv) {
           cid: info.rootCid.slice(0, 20) + '...',
           rate: info.bytes ? filesize(info.bytes) : '',
         })
+      } else if (info.type === 'downloading') {
+        log('DOWNLOADING', `${info.rootCid.slice(0, 24)}... ${filesize(info.bytes)} so far`)
       } else if (info.type === 'error') {
         log('ERROR', `${info.rootCid}: ${info.error}`)
       } else if (info.type === 'retry') {
