@@ -46,7 +46,7 @@ async function _main(argv) {
     .option('--space <name...>', 'Export only these spaces (repeatable)')
     .option('--exclude-space <name...>', 'Exclude these spaces (repeatable)')
     .option('--continue', 'Resume a previous export')
-    .option('--concurrency <n>', 'Concurrent transfers', parseInt, 1)
+    .option('--concurrency <n>', 'Concurrent transfers', (v) => parseInt(v, 10), 1)
     .option('--dry-run', 'Enumerate only, do not transfer')
     .option('--gateway <url>', 'Gateway URL', 'https://w3s.link')
     .option('--db <path>', 'SQLite database path', 'storacha-export.db')
