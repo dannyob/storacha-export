@@ -60,6 +60,11 @@ export class JobQueue {
         updated_at = datetime('now')
       WHERE status = 'error'
     `)
+    this._resetInProgress = this.db.prepare(`
+      UPDATE jobs SET status = 'pending',
+        updated_at = datetime('now')
+      WHERE status = 'in_progress'
+    `)
     this._upsertSpace = this.db.prepare(`
       INSERT INTO spaces (did, name, total_uploads, total_bytes, enumerated_at)
       VALUES (@did, @name, @totalUploads, @totalBytes, datetime('now'))
@@ -110,6 +115,10 @@ export class JobQueue {
 
   resetErrors() {
     this._resetErrors.run()
+  }
+
+  resetInProgress() {
+    return this._resetInProgress.run()
   }
 
   upsertSpace({ did, name, totalUploads, totalBytes }) {

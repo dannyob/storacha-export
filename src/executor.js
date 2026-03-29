@@ -1,8 +1,15 @@
 import { Readable } from 'node:stream'
 import { PassThrough } from 'node:stream'
 import { pipeline } from 'node:stream/promises'
+import { Agent } from 'undici'
 
 const DEFAULT_GATEWAY = 'https://w3s.link'
+
+// Disable body timeout for large CAR downloads (default 300s is too short)
+const fetchDispatcher = new Agent({
+  bodyTimeout: 0,        // no body timeout — CARs can be multi-GB
+  headersTimeout: 60000, // 60s to get initial response headers
+})
 
 export function buildGatewayUrl(rootCid, gatewayUrl = DEFAULT_GATEWAY) {
   return `${gatewayUrl.replace(/\/$/, '')}/ipfs/${rootCid}?format=car`
@@ -28,7 +35,7 @@ export async function executeJob(job, backends, queue, options = {}) {
   let lastError
   for (let attempt = 1; attempt <= maxRetries; attempt++) {
     try {
-      const res = await fetch(url)
+      const res = await fetch(url, { dispatcher: fetchDispatcher })
       if (res.status === 429 || res.status >= 500) {
         const retryAfter = res.headers.get('retry-after')
         const delay = retryAfter
