@@ -5,10 +5,10 @@ import { Agent } from 'undici'
 
 const DEFAULT_GATEWAY = 'https://w3s.link'
 
-// No body timeout — a stalled connection that resumes is better than
-// re-downloading a multi-TiB CAR. TCP errors will still surface naturally.
+// 10 minute body timeout — long enough for stalls to recover,
+// short enough not to waste hours on a truly dead connection.
 const fetchDispatcher = new Agent({
-  bodyTimeout: 0,        // no timeout between chunks
+  bodyTimeout: 600000,   // 10 min between chunks before retry
   headersTimeout: 60000, // 60s to get initial response headers
 })
 
