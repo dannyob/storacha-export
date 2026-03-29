@@ -338,11 +338,11 @@ async function _main(argv) {
           rate: info.bytes ? filesize(info.bytes) : '',
         })
       } else if (info.type === 'downloading') {
-        log('DOWNLOADING', `${info.rootCid.slice(0, 24)}... ${filesize(info.bytes)} so far`)
+        log('DOWNLOADING', `[${info.spaceName}] ${info.rootCid.slice(0, 24)}... ${filesize(info.bytes)} so far`)
       } else if (info.type === 'error') {
-        log('ERROR', `${info.rootCid}: ${info.error}`)
+        log('ERROR', `[${info.spaceName}] ${info.rootCid}: ${info.error}`)
       } else if (info.type === 'retry') {
-        log('RETRY', `${info.rootCid} attempt ${info.attempt}, waiting ${info.delay}ms`)
+        log('RETRY', `[${info.spaceName}] ${info.rootCid} attempt ${info.attempt}, waiting ${info.delay}ms: ${info.error}`)
       } else if (info.type === 'complete') {
         bar.stop()
       }
