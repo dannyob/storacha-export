@@ -5,7 +5,7 @@ import { enumerateUploads } from './enumerator.js'
 import { JobQueue } from './queue.js'
 import { createBackend, listBackends } from './backends/index.js'
 import { executeAll } from './executor.js'
-import { createSpinner, createProgressBar } from './progress.js'
+import { createSpinner, createProgressBar, log } from './progress.js'
 import { printRooster } from './rooster.js'
 import fs from 'node:fs'
 import path from 'node:path'
@@ -324,7 +324,9 @@ async function _main(argv) {
           rate: info.bytes ? filesize(info.bytes) : '',
         })
       } else if (info.type === 'error') {
-        console.error(`\n  ERROR ${info.rootCid}: ${info.error}`)
+        log('ERROR', `${info.rootCid}: ${info.error}`)
+      } else if (info.type === 'retry') {
+        log('RETRY', `${info.rootCid} attempt ${info.attempt}, waiting ${info.delay}ms`)
       } else if (info.type === 'complete') {
         bar.stop()
       }
