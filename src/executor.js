@@ -116,21 +116,28 @@ export async function executeJob(job, backends, queue, options = {}) {
  * @param {object} [options]
  * @param {number} [options.concurrency]
  * @param {string} [options.gatewayUrl]
+ * @param {(job: object) => boolean} [options.spaceFilter]
  * @param {(info: object) => void} [options.onProgress]
  */
 export async function executeAll(queue, backends, options = {}) {
-  const { concurrency = 1, gatewayUrl, onProgress } = options
+  const { concurrency = 1, gatewayUrl, spaceFilter, onProgress } = options
   const backendNames = backends.map(b => b.name)
 
-  // Collect all pending jobs across backends
+  // Collect all pending jobs across backends, filtered by selected spaces
   const allPending = []
   for (const name of backendNames) {
-    const pending = queue.getPending(name)
-    console.log(`[executeAll] getPending('${name}'): ${pending.length} jobs`)
+    let pending = queue.getPending(name)
+    if (spaceFilter) {
+      const before = pending.length
+      pending = pending.filter(spaceFilter)
+      if (pending.length !== before) {
+        console.log(`[executeAll] getPending('${name}'): ${before} jobs, ${before - pending.length} filtered by space selection`)
+      }
+    }
     allPending.push(...pending)
   }
 
-  console.log(`[executeAll] total pending jobs to process: ${allPending.length}`)
+  console.log(`[executeAll] ${allPending.length} jobs to process`)
 
   if (allPending.length === 0) {
     onProgress?.({ type: 'complete', total: 0 })
