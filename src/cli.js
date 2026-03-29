@@ -213,37 +213,56 @@ async function _main(argv) {
   }
 
   // --- Collect space sizes and sort smallest first ---
-  const sizeSpinner = createSpinner('Collecting space sizes...')
-  try {
-    const now = new Date()
-    const from = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - 1, 1))
-    const period = { from, to: now }
-    const spaceSizes = new Map()
+  // Check if we already have sizes from a previous run
+  const existingSizes = new Map()
+  for (const space of selectedSpaces) {
+    const s = queue.getSpace(space.did)
+    if (s?.total_bytes > 0) existingSizes.set(space.did, s.total_bytes)
+  }
 
-    // Walk subscriptions to get usage per space (same approach as storacha CLI)
-    for (const account of Object.values(client.accounts())) {
-      const subs = await client.capability.subscription.list(account.did())
-      for (const { consumers } of subs.results) {
-        for (const spaceDid of consumers) {
-          try {
-            const result = await client.capability.usage.report(spaceDid, period)
-            for (const [, report] of Object.entries(result)) {
-              const prev = spaceSizes.get(spaceDid) || 0
-              spaceSizes.set(spaceDid, prev + (report?.size?.final || 0))
-            }
-          } catch { /* skip spaces we can't query */ }
-        }
-      }
-    }
-
+  if (existingSizes.size === selectedSpaces.length) {
+    // All sizes cached — skip the slow usage report API
     for (const space of selectedSpaces) {
-      space.totalBytes = spaceSizes.get(space.did) || 0
-      queue.upsertSpace({ did: space.did, name: space.name, totalUploads: 0, totalBytes: space.totalBytes })
+      space.totalBytes = existingSizes.get(space.did)
     }
     selectedSpaces.sort((a, b) => (a.totalBytes || 0) - (b.totalBytes || 0))
-    sizeSpinner.succeed(`Collected sizes — smallest first: ${selectedSpaces.map(s => `${s.name} (${filesize(s.totalBytes || 0)})`).join(', ')}`)
-  } catch (e) {
-    sizeSpinner.succeed('Could not collect sizes — using default order')
+    console.log(`Using cached space sizes — smallest first: ${selectedSpaces.map(s => `${s.name} (${filesize(s.totalBytes || 0)})`).join(', ')}`)
+  } else {
+    const sizeSpinner = createSpinner('Collecting space sizes from Storacha...')
+    try {
+      const now = new Date()
+      const from = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - 1, 1))
+      const period = { from, to: now }
+      const spaceSizes = new Map()
+
+      console.log('Querying usage reports for each space (this can be slow)...')
+      for (const account of Object.values(client.accounts())) {
+        const subs = await client.capability.subscription.list(account.did())
+        for (const { consumers } of subs.results) {
+          for (const spaceDid of consumers) {
+            const spaceName = selectedSpaces.find(s => s.did === spaceDid)?.name || spaceDid.slice(0, 20)
+            console.log(`  Querying ${spaceName}...`)
+            try {
+              const result = await client.capability.usage.report(spaceDid, period)
+              for (const [, report] of Object.entries(result)) {
+                const prev = spaceSizes.get(spaceDid) || 0
+                spaceSizes.set(spaceDid, prev + (report?.size?.final || 0))
+              }
+              console.log(`  ${spaceName}: ${filesize(spaceSizes.get(spaceDid) || 0)}`)
+            } catch { console.log(`  ${spaceName}: skipped (no access)`) }
+          }
+        }
+      }
+
+      for (const space of selectedSpaces) {
+        space.totalBytes = spaceSizes.get(space.did) || 0
+        queue.upsertSpace({ did: space.did, name: space.name, totalUploads: 0, totalBytes: space.totalBytes })
+      }
+      selectedSpaces.sort((a, b) => (a.totalBytes || 0) - (b.totalBytes || 0))
+      sizeSpinner.succeed(`Collected sizes — smallest first: ${selectedSpaces.map(s => `${s.name} (${filesize(s.totalBytes || 0)})`).join(', ')}`)
+    } catch (e) {
+      sizeSpinner.succeed('Could not collect sizes — using default order')
+    }
   }
 
   // --- Enumerate ---
@@ -290,6 +309,7 @@ async function _main(argv) {
 
   // --- Execute ---
   const stats = queue.getStats()
+  console.log(`\nJob queue: ${stats.total} total, ${stats.done} done, ${stats.error} errors, ${stats.pending} pending`)
   const bar = createProgressBar(stats.pending)
   let completed = 0
 
