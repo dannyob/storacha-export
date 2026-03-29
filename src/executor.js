@@ -3,6 +3,7 @@ import { PassThrough } from 'node:stream'
 import { pipeline } from 'node:stream/promises'
 import { Agent } from 'undici'
 import { log } from './progress.js'
+import { repairTruncatedCar } from './repair.js'
 
 const DEFAULT_GATEWAY = 'https://w3s.link'
 
@@ -104,6 +105,31 @@ export async function executeJob(job, backends, queue, options = {}) {
         onProgress?.({ type: 'retry', rootCid: job.root_cid, spaceName: job.space_name, attempt, delay, error: err.message })
         await sleep(delay)
       }
+    }
+  }
+
+  // If the error looks like a truncated CAR, try repair
+  if (lastError?.message?.includes('unexpected EOF') || lastError?.message?.includes('import failed')) {
+    try {
+      const repair = await repairTruncatedCar(
+        job.root_cid,
+        gatewayUrl || DEFAULT_GATEWAY,
+        onProgress
+      )
+      if (repair) {
+        // Import the repair CAR (missing blocks only)
+        for (const be of backends) {
+          await be.importCar(job.root_cid, repair.stream)
+        }
+        if (repair.complete) {
+          queue.markDone(job.root_cid, job.backend, 0)
+          onProgress?.({ type: 'done', rootCid: job.root_cid, spaceName: job.space_name, bytes: 0 })
+          log('REPAIR', `[${job.space_name}] ${job.root_cid.slice(0, 24)}... repaired successfully`)
+          return
+        }
+      }
+    } catch (repairErr) {
+      log('REPAIR', `[${job.space_name}] ${job.root_cid.slice(0, 24)}... repair failed: ${repairErr.message}`)
     }
   }
 

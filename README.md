@@ -46,8 +46,8 @@ storacha-export --space "MySpace" --space "OtherSpace" --backend local --output 
 # Export all except certain spaces
 storacha-export --exclude-space "BigSpace" --backend local --output ./cars/
 
-# Resume an interrupted export
-storacha-export --continue --backend local --output ./cars/
+# Resume an interrupted export (automatic — just re-run)
+storacha-export --backend local --output ./cars/
 
 # Dry run — see what would be exported
 storacha-export --dry-run --backend local --output ./cars/
@@ -63,7 +63,7 @@ storacha-export --dry-run --backend local --output ./cars/
 | `--cluster-api <url>` | IPFS Cluster API endpoint |
 | `--space <name...>` | Export only named spaces (repeatable) |
 | `--exclude-space <name...>` | Skip named spaces (repeatable) |
-| `--continue` | Resume previous export |
+| `--fresh` | Start over, discarding previous progress tracking |
 | `--concurrency <n>` | Parallel transfers (default: 1) |
 | `--dry-run` | Enumerate only |
 | `--gateway <url>` | Gateway URL (default: https://w3s.link) |
@@ -71,9 +71,26 @@ storacha-export --dry-run --backend local --output ./cars/
 
 ## Resumability
 
-Export progress is tracked in a SQLite database (`storacha-export.db`). If an export is interrupted, re-run with `--continue` to pick up where you left off.
+Export progress is tracked in a SQLite database (`storacha-export.db`). If an export is interrupted, just re-run — it automatically picks up where it left off, skipping already-exported content.
 
-Even if the database is lost, `--continue` will check each backend to see what content is already present before re-downloading.
+Even if the database is lost, the tool checks each backend to see what content is already present before re-downloading.
+
+Use `--fresh` to start over (this only resets the progress tracking — already-exported data in your backends is not affected).
+
+## Truncated CAR Repair
+
+The Storacha gateway sometimes serves incomplete CAR files for large uploads — the download cuts off mid-stream, producing a truncated file that `dag import` rejects with "unexpected EOF".
+
+When this happens, `storacha-export` automatically attempts repair:
+
+1. Re-downloads the (truncated) CAR and parses what it can
+2. From the DAG-PB structure nodes, identifies all links to missing leaf blocks
+3. Fetches each missing block individually from the gateway (`?format=raw`)
+4. Builds a small CAR containing just the missing blocks and imports it
+
+This works because the gateway reliably serves individual blocks even when it can't serve the complete CAR in one stream. The DAG structure nodes (which describe the file layout) appear early in the CAR, so they're almost always present in the truncated download — only the raw data leaves at the tail are missing.
+
+If the DAG structure itself is incomplete (missing intermediate nodes, not just leaves), repair is not possible and the error is reported normally.
 
 ## License
 
