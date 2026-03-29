@@ -126,8 +126,11 @@ export async function executeAll(queue, backends, options = {}) {
   const allPending = []
   for (const name of backendNames) {
     const pending = queue.getPending(name)
+    console.log(`[executeAll] getPending('${name}'): ${pending.length} jobs`)
     allPending.push(...pending)
   }
+
+  console.log(`[executeAll] total pending jobs to process: ${allPending.length}`)
 
   if (allPending.length === 0) {
     onProgress?.({ type: 'complete', total: 0 })
@@ -138,14 +141,19 @@ export async function executeAll(queue, backends, options = {}) {
   let idx = 0
   const total = allPending.length
 
-  async function worker() {
+  async function worker(workerId) {
+    console.log(`[executeAll] worker ${workerId} started`)
     while (idx < allPending.length) {
-      const job = allPending[idx++]
+      const jobIdx = idx++
+      const job = allPending[jobIdx]
+      console.log(`[executeAll] worker ${workerId} processing job ${jobIdx}: ${job.root_cid.slice(0, 24)}... (${job.space_name})`)
       await executeJob(job, backends, queue, { gatewayUrl, onProgress })
+      console.log(`[executeAll] worker ${workerId} finished job ${jobIdx}`)
     }
+    console.log(`[executeAll] worker ${workerId} done (no more jobs)`)
   }
 
-  const workers = Array.from({ length: concurrency }, () => worker())
+  const workers = Array.from({ length: concurrency }, (_, i) => worker(i))
   await Promise.all(workers)
 
   onProgress?.({ type: 'complete', total })
