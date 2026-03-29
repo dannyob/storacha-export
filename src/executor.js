@@ -44,7 +44,7 @@ export async function executeJob(job, backends, queue, options = {}) {
         const delay = retryAfter
           ? parseInt(retryAfter, 10) * 1000
           : Math.min(1000 * Math.pow(2, attempt), 30000)
-        onProgress?.({ type: 'retry', rootCid: job.root_cid, attempt, delay })
+        onProgress?.({ type: 'retry', rootCid: job.root_cid, spaceName: job.space_name, attempt, delay, error: `HTTP ${res.status}` })
         await sleep(delay)
         continue
       }
@@ -63,7 +63,7 @@ export async function executeJob(job, backends, queue, options = {}) {
           byteCount += chunk.length
           const now = Date.now()
           if (now - lastProgressLog > 30000) { // every 30s
-            onProgress?.({ type: 'downloading', rootCid: job.root_cid, bytes: byteCount })
+            onProgress?.({ type: 'downloading', rootCid: job.root_cid, spaceName: job.space_name, bytes: byteCount })
             lastProgressLog = now
           }
           callback(null, chunk)
@@ -94,21 +94,21 @@ export async function executeJob(job, backends, queue, options = {}) {
       }
 
       queue.markDone(job.root_cid, job.backend, byteCount)
-      onProgress?.({ type: 'done', rootCid: job.root_cid, bytes: byteCount })
+      onProgress?.({ type: 'done', rootCid: job.root_cid, spaceName: job.space_name, bytes: byteCount })
       return
 
     } catch (err) {
       lastError = err
       if (attempt < maxRetries) {
         const delay = Math.min(1000 * Math.pow(2, attempt), 30000)
-        onProgress?.({ type: 'retry', rootCid: job.root_cid, attempt, delay })
+        onProgress?.({ type: 'retry', rootCid: job.root_cid, spaceName: job.space_name, attempt, delay, error: err.message })
         await sleep(delay)
       }
     }
   }
 
   queue.markError(job.root_cid, job.backend, lastError?.message || 'unknown error')
-  onProgress?.({ type: 'error', rootCid: job.root_cid, error: lastError?.message })
+  onProgress?.({ type: 'error', rootCid: job.root_cid, spaceName: job.space_name, error: lastError?.message })
 }
 
 /**
