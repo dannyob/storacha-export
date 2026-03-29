@@ -52,6 +52,9 @@ export async function executeJob(job, backends, queue, options = {}) {
           callback(null, chunk)
         }
       })
+
+      // Handle stream errors (e.g. body timeout) to prevent unhandled crash
+      nodeStream.on('error', (err) => countingStream.destroy(err))
       nodeStream.pipe(countingStream)
 
       if (backends.length === 1) {
