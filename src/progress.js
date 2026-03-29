@@ -2,19 +2,27 @@ import ora from 'ora'
 import cliProgress from 'cli-progress'
 
 const isTTY = process.stdout.isTTY
+const pid = process.pid
+
+function ts() {
+  return new Date().toISOString().replace('T', ' ').slice(0, 19)
+}
+
+function log(level, msg) {
+  console.log(`${ts()} [${pid}] ${level} ${msg}`)
+}
 
 export function createSpinner(text) {
   if (isTTY) {
     return ora(text).start()
   }
-  // Non-TTY: just log
   return {
     text,
-    start() { console.log(text); return this },
-    succeed(msg) { console.log(`✓ ${msg || this.text}`) },
-    fail(msg) { console.log(`✗ ${msg || this.text}`) },
+    start() { log('INFO', text); return this },
+    succeed(msg) { log('INFO', `✓ ${msg || this.text}`) },
+    fail(msg) { log('ERROR', `✗ ${msg || this.text}`) },
     stop() {},
-    set text(t) { /* no-op for non-TTY */ },
+    set text(t) { log('INFO', t) },
     get text() { return text },
   }
 }
@@ -35,21 +43,22 @@ export function createProgressBar(total) {
     }
   }
 
-  // Non-TTY: periodic log lines
+  // Non-TTY: log every item with timestamp and PID
   let current = 0
   return {
     update(value, payload) {
       current = value
-      console.log(`[${current}/${total}] ${payload?.cid || ''}`)
+      log('PROGRESS', `[${current}/${total}] ${payload?.cid || ''} ${payload?.rate || ''}`.trim())
     },
     increment(payload) {
       current++
-      if (current % 10 === 0 || current === total) {
-        console.log(`[${current}/${total}] ${payload?.cid || ''}`)
-      }
+      log('DONE', `[${current}/${total}] ${payload?.cid || ''} ${payload?.rate || ''}`.trim())
     },
     stop() {
-      console.log(`Completed: ${current}/${total}`)
+      log('INFO', `Completed: ${current}/${total}`)
     },
   }
 }
+
+// Export log function for use elsewhere
+export { log }
