@@ -14,7 +14,7 @@ describe('e2e: storacha-export', () => {
     assert.ok(out.includes('--backend'))
     assert.ok(out.includes('--space'))
     assert.ok(out.includes('--exclude-space'))
-    assert.ok(out.includes('--continue'))
+    assert.ok(out.includes('--fresh'))
   })
 
   it('shows version', () => {

@@ -45,7 +45,7 @@ async function _main(argv) {
     .option('--cluster-api <url>', 'IPFS Cluster API endpoint')
     .option('--space <name...>', 'Export only these spaces (repeatable)')
     .option('--exclude-space <name...>', 'Exclude these spaces (repeatable)')
-    .option('--continue', 'Resume a previous export')
+    .option('--fresh', 'Start a new export, discarding previous progress')
     .option('--concurrency <n>', 'Concurrent transfers', (v) => parseInt(v, 10), 1)
     .option('--dry-run', 'Enumerate only, do not transfer')
     .option('--gateway <url>', 'Gateway URL', 'https://w3s.link')
@@ -197,19 +197,36 @@ async function _main(argv) {
 
   // --- Open/create job queue ---
   const dbPath = opts.db
-  let queue
+  const dbExists = fs.existsSync(dbPath)
+  let continuing = false
 
-  if (opts.continue && !fs.existsSync(dbPath)) {
-    console.log('No previous database found. Will check backends for existing content.')
+  if (dbExists && !opts.fresh) {
+    if (needsWizard) {
+      continuing = await confirm({
+        message: 'Found previous export progress. Continue where you left off? (No = start fresh, previous progress discarded)',
+        default: true,
+      })
+    } else {
+      continuing = true
+    }
+    if (!continuing) {
+      fs.unlinkSync(dbPath)
+    }
   }
-  queue = new JobQueue(dbPath)
 
-  // Reset any jobs stuck in_progress from a crashed previous run
-  if (opts.continue) {
+  if (opts.fresh && dbExists) {
+    fs.unlinkSync(dbPath)
+  }
+
+  const queue = new JobQueue(dbPath)
+
+  if (continuing) {
     const reset = queue.resetInProgress()
     if (reset.changes > 0) {
       console.log(`Reset ${reset.changes} stuck in-progress job(s) from previous run.`)
     }
+    const prev = queue.getStats()
+    console.log(`Resuming: ${prev.done} done, ${prev.error} errors, ${prev.pending} pending from previous run.`)
   }
 
   // --- Collect space sizes and sort smallest first ---
@@ -275,8 +292,9 @@ async function _main(argv) {
   for await (const upload of enumerateUploads(client, selectedSpaces, {
     onProgress: (msg) => { enumSpinner.text = msg },
   })) {
-    // For --continue without DB, check backends before queuing
-    if (opts.continue) {
+    // When continuing, check if backends already have this content
+    // (handles case where DB was lost but content was already exported)
+    if (continuing) {
       let alreadyDone = true
       for (const be of backends) {
         if (!(await be.hasContent(upload.rootCid))) {
