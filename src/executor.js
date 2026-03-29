@@ -5,9 +5,10 @@ import { Agent } from 'undici'
 
 const DEFAULT_GATEWAY = 'https://w3s.link'
 
-// Disable body timeout for large CAR downloads (default 300s is too short)
+// No body timeout — a stalled connection that resumes is better than
+// re-downloading a multi-TiB CAR. TCP errors will still surface naturally.
 const fetchDispatcher = new Agent({
-  bodyTimeout: 0,        // no body timeout — CARs can be multi-GB
+  bodyTimeout: 0,        // no timeout between chunks
   headersTimeout: 60000, // 60s to get initial response headers
 })
 
