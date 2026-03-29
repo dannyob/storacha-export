@@ -203,7 +203,7 @@ async function _main(argv) {
   if (dbExists && !opts.fresh) {
     if (needsWizard) {
       continuing = await confirm({
-        message: 'Found previous export progress. Continue where you left off? (No = start fresh, previous progress discarded)',
+        message: 'Found a previous export run. Resume it? (No = re-scan everything; already-exported data is not affected)',
         default: true,
       })
     } else {
