@@ -389,7 +389,7 @@ async function _main(argv) {
     for (const e of errors) {
       console.log(`  ${e.space_name} ${e.root_cid} → ${e.backend}: ${e.error_msg}`)
     }
-    console.log(`\nRe-run with --continue to retry failed exports.`)
+    console.log(`\nRe-run to retry failed exports.`)
   }
 
   // --- Cleanup ---
