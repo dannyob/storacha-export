@@ -2,6 +2,7 @@ import { Readable } from 'node:stream'
 import { PassThrough } from 'node:stream'
 import { pipeline } from 'node:stream/promises'
 import { Agent } from 'undici'
+import { log } from './progress.js'
 
 const DEFAULT_GATEWAY = 'https://w3s.link'
 
@@ -38,6 +39,7 @@ export async function executeJob(job, backends, queue, options = {}) {
     try {
       const res = await fetch(url, { dispatcher: fetchDispatcher })
       if (res.status === 429 || res.status >= 500) {
+        await res.body?.cancel()
         const retryAfter = res.headers.get('retry-after')
         const delay = retryAfter
           ? parseInt(retryAfter, 10) * 1000
@@ -47,6 +49,7 @@ export async function executeJob(job, backends, queue, options = {}) {
         continue
       }
       if (!res.ok) {
+        await res.body?.cancel()
         throw new Error(`Gateway returned ${res.status}: ${res.statusText}`)
       }
 
@@ -131,13 +134,13 @@ export async function executeAll(queue, backends, options = {}) {
       const before = pending.length
       pending = pending.filter(spaceFilter)
       if (pending.length !== before) {
-        console.log(`[executeAll] getPending('${name}'): ${before} jobs, ${before - pending.length} filtered by space selection`)
+        log('INFO', `${pending.length} pending jobs for ${name} (${before - pending.length} filtered by space selection)`)
       }
     }
     allPending.push(...pending)
   }
 
-  console.log(`[executeAll] ${allPending.length} jobs to process`)
+  log('INFO', `${allPending.length} jobs to process`)
 
   if (allPending.length === 0) {
     onProgress?.({ type: 'complete', total: 0 })
@@ -148,19 +151,14 @@ export async function executeAll(queue, backends, options = {}) {
   let idx = 0
   const total = allPending.length
 
-  async function worker(workerId) {
-    console.log(`[executeAll] worker ${workerId} started`)
+  async function worker() {
     while (idx < allPending.length) {
-      const jobIdx = idx++
-      const job = allPending[jobIdx]
-      console.log(`[executeAll] worker ${workerId} processing job ${jobIdx}: ${job.root_cid.slice(0, 24)}... (${job.space_name})`)
+      const job = allPending[idx++]
       await executeJob(job, backends, queue, { gatewayUrl, onProgress })
-      console.log(`[executeAll] worker ${workerId} finished job ${jobIdx}`)
     }
-    console.log(`[executeAll] worker ${workerId} done (no more jobs)`)
   }
 
-  const workers = Array.from({ length: concurrency }, (_, i) => worker(i))
+  const workers = Array.from({ length: concurrency }, () => worker())
   await Promise.all(workers)
 
   onProgress?.({ type: 'complete', total })

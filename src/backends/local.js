@@ -18,7 +18,6 @@ export class LocalBackend {
   }
 
   async importCar(rootCid, stream) {
-    fs.mkdirSync(this.outputDir, { recursive: true })
     const filePath = path.join(this.outputDir, `${rootCid}.car`)
     const dest = fs.createWriteStream(filePath)
     await pipeline(stream, dest)

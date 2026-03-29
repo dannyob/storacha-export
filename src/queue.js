@@ -133,6 +133,25 @@ export class JobQueue {
     return this._getStats.get()
   }
 
+  getPendingCountForSpaces(spaceNames) {
+    const placeholders = spaceNames.map(() => '?').join(',')
+    return this.db.prepare(
+      `SELECT COUNT(*) as count FROM jobs WHERE status = 'pending' AND space_name IN (${placeholders})`
+    ).get(...spaceNames)?.count || 0
+  }
+
+  getTotalBytesTransferred() {
+    return this.db.prepare(
+      "SELECT COALESCE(SUM(bytes_transferred), 0) as total FROM jobs WHERE status = 'done'"
+    ).get().total
+  }
+
+  getErrors() {
+    return this.db.prepare(
+      "SELECT root_cid, space_name, backend, error_msg FROM jobs WHERE status = 'error'"
+    ).all()
+  }
+
   close() {
     this.db.close()
   }
