@@ -310,12 +310,19 @@ async function _main(argv) {
   // --- Execute ---
   const stats = queue.getStats()
   console.log(`\nJob queue: ${stats.total} total, ${stats.done} done, ${stats.error} errors, ${stats.pending} pending`)
-  const bar = createProgressBar(stats.pending)
+  // Count only jobs for selected spaces
+  const selectedPending = queue.db.prepare(
+    `SELECT COUNT(*) as count FROM jobs WHERE status = 'pending' AND space_name IN (${selectedSpaces.map(() => '?').join(',')})`
+  ).get(...selectedSpaces.map(s => s.name))?.count || 0
+  console.log(`Selected spaces: ${selectedPending} pending`)
+  const bar = createProgressBar(selectedPending)
   let completed = 0
 
+  const selectedSpaceNames = new Set(selectedSpaces.map(s => s.name))
   await executeAll(queue, backends, {
     concurrency: opts.concurrency,
     gatewayUrl: opts.gateway,
+    spaceFilter: (job) => selectedSpaceNames.has(job.space_name),
     onProgress: (info) => {
       if (info.type === 'done') {
         completed++
