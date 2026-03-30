@@ -30,11 +30,16 @@ export async function exportUpload(options: ExportUploadOptions): Promise<void> 
       const rawBlocks = await fetcher.fetchCar(rootCid)
       const tracked = trackBlocks(rawBlocks, rootCid, manifest)
 
-      // Count bytes as they flow through
+      // Count bytes and report progress as they flow through
       let byteCount = 0
+      let blockCount = 0
       const counted = (async function* () {
         for await (const block of tracked) {
           byteCount += block.bytes.length
+          blockCount++
+          if (blockCount % 50 === 0) {
+            onProgress?.({ type: 'progress', rootCid, bytes: byteCount, blocks: blockCount })
+          }
           yield block
         }
       })()

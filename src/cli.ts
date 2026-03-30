@@ -63,6 +63,7 @@ async function _main(argv: string[]) {
   const spaceSizes = new Map<string, number>()
   let queue: UploadQueue | undefined
   let selectedSpaceNames: string[] = []
+  const activeJobInfo = new Map<string, { spaceName: string; bytes: number; blocks: number; startedAt: number }>()
 
   function addLogLine(msg: string) {
     logLines.push(msg)
@@ -71,13 +72,28 @@ async function _main(argv: string[]) {
 
   function buildDashboardState(): DashboardState {
     const emptyStats = { total: 0, complete: 0, error: 0, pending: 0, downloading: 0, partial: 0, repairing: 0, total_bytes: 0 }
+
+    // Merge live progress info into active jobs from DB
+    const dbActive = queue ? queue.getActiveJobs(10) : []
+    const activeJobs = dbActive.map(j => {
+      const live = activeJobInfo.get(j.root_cid)
+      const elapsed = live ? Math.round((Date.now() - live.startedAt) / 1000) : 0
+      let detail = j.status
+      if (live && live.bytes > 0) {
+        detail = `${filesize(live.bytes)} / ${live.blocks} blocks / ${elapsed}s`
+      } else if (live) {
+        detail = `connecting... ${elapsed}s`
+      }
+      return { ...j, status: detail }
+    })
+
     return {
       phase,
       pid: process.pid,
       stats: queue ? queue.getStats() : emptyStats,
       bySpace: queue && selectedSpaceNames.length > 0 ? queue.getStatsBySpace(selectedSpaceNames) : [],
       spaceSizes,
-      activeJobs: queue ? queue.getActiveJobs() : [],
+      activeJobs,
       recentDone: queue ? queue.getRecentDone() : [],
       recentErrors: queue ? queue.getRecentErrors() : [],
       logLines,
@@ -106,7 +122,26 @@ async function _main(argv: string[]) {
   }
 
   const onProgress = (info: { type: string; [key: string]: any }) => {
-    addLogLine(formatProgress(info))
+    const cid = info.rootCid as string | undefined
+    if (cid) {
+      switch (info.type) {
+        case 'downloading':
+          activeJobInfo.set(cid, { spaceName: info.spaceName || '', bytes: 0, blocks: 0, startedAt: Date.now() })
+          break
+        case 'progress':
+          { const entry = activeJobInfo.get(cid)
+            if (entry) { entry.bytes = info.bytes; entry.blocks = info.blocks } }
+          break
+        case 'done':
+        case 'error':
+          activeJobInfo.delete(cid)
+          break
+      }
+    }
+    // Don't log noisy per-block progress events
+    if (info.type !== 'progress') {
+      addLogLine(formatProgress(info))
+    }
   }
 
   // Capture log() output into dashboard too
