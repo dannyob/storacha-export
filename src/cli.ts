@@ -333,27 +333,21 @@ async function _main(argv: string[]) {
     statusMessage = `Checking ${backend.name} for existing content (${pending.length} uploads)...`
     log('INFO', `Scanning ${backend.name} for already-exported CIDs...`)
     let found = 0
-    let totalBytes = 0
     for (const [i, upload] of pending.entries()) {
       try {
         if (await backend.hasContent(upload.root_cid)) {
-          let size = 0
-          if (backend.getContentSize) {
-            size = (await backend.getContentSize(upload.root_cid)) ?? 0
-          }
-          queue.markComplete(upload.root_cid, backend.name, size)
+          queue.markComplete(upload.root_cid, backend.name, 0)
           found++
-          totalBytes += size
         }
       } catch {
         // skip — will be attempted during export
       }
       if ((i + 1) % 100 === 0) {
-        statusMessage = `Checking ${backend.name}... ${i + 1}/${pending.length} (${found} found, ${filesize(totalBytes)})`
+        statusMessage = `Checking ${backend.name}... ${i + 1}/${pending.length} (${found} found)`
       }
     }
     if (found > 0) {
-      log('INFO', `Found ${found}/${pending.length} already in ${backend.name} (${filesize(totalBytes)})`)
+      log('INFO', `Found ${found}/${pending.length} already in ${backend.name}`)
     }
   }
   statusMessage = `Ready — ${queue.getStats().pending} pending, ${queue.getStats().complete} already done`
