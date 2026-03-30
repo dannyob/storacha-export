@@ -32,6 +32,9 @@ export class UploadQueue {
   private _resetForRetry: Database.Statement
   private _getStats: Database.Statement
   private _getComplete: Database.Statement
+  private _getActiveJobs: Database.Statement
+  private _getRecentDone: Database.Statement
+  private _getRecentErrors: Database.Statement
   private _addBatch: Database.Transaction
 
   constructor(private db: Database.Database) {
@@ -79,6 +82,18 @@ export class UploadQueue {
     `)
 
     this._getComplete = db.prepare(`SELECT * FROM uploads WHERE backend = @backend AND status = 'complete'`)
+
+    this._getActiveJobs = db.prepare(
+      "SELECT space_name, root_cid, status FROM uploads WHERE status IN ('downloading', 'repairing') ORDER BY updated_at DESC LIMIT ?"
+    )
+
+    this._getRecentDone = db.prepare(
+      "SELECT space_name, root_cid FROM uploads WHERE status = 'complete' ORDER BY updated_at DESC LIMIT ?"
+    )
+
+    this._getRecentErrors = db.prepare(
+      "SELECT space_name, root_cid, error_msg FROM uploads WHERE status = 'error' ORDER BY updated_at DESC LIMIT ?"
+    )
 
     this._addBatch = db.transaction((uploads: UploadInput[]) => {
       for (const u of uploads) this._add.run(u)
@@ -159,20 +174,14 @@ export class UploadQueue {
   }
 
   getActiveJobs(limit = 5): Array<{ space_name: string; root_cid: string; status: string }> {
-    return this.db.prepare(
-      "SELECT space_name, root_cid, status FROM uploads WHERE status IN ('downloading', 'repairing') ORDER BY updated_at DESC LIMIT ?"
-    ).all(limit) as any[]
+    return this._getActiveJobs.all(limit) as any[]
   }
 
   getRecentDone(limit = 5): Array<{ space_name: string; root_cid: string }> {
-    return this.db.prepare(
-      "SELECT space_name, root_cid FROM uploads WHERE status = 'complete' ORDER BY updated_at DESC LIMIT ?"
-    ).all(limit) as any[]
+    return this._getRecentDone.all(limit) as any[]
   }
 
   getRecentErrors(limit = 10): Array<{ space_name: string; root_cid: string; error_msg: string | null }> {
-    return this.db.prepare(
-      "SELECT space_name, root_cid, error_msg FROM uploads WHERE status = 'error' ORDER BY updated_at DESC LIMIT ?"
-    ).all(limit) as any[]
+    return this._getRecentErrors.all(limit) as any[]
   }
 }
