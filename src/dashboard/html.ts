@@ -120,7 +120,6 @@ export function generateDashboardHtml(state: DashboardState): string {
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<meta http-equiv="refresh" content="5">
 <title>storacha-export Dashboard</title>
 <link href="https://fonts.googleapis.com/css2?family=Archivo:wght@400;500;600;700;800;900&display=swap" rel="stylesheet" media="print" onload="this.media='all'">
 <style>
@@ -236,7 +235,21 @@ export function generateDashboardHtml(state: DashboardState): string {
   <div class="log-panel" id="logPanel">${logContent}</div>
 
   <div class="timestamp">Last updated: ${now} UTC &middot; Auto-refreshes every 5s</div>
-<script>document.getElementById('logPanel').scrollTop = document.getElementById('logPanel').scrollHeight;</script>
+<script>
+document.getElementById('logPanel').scrollTop = document.getElementById('logPanel').scrollHeight;
+setInterval(async () => {
+  try {
+    const r = await fetch(location.href);
+    const html = await r.text();
+    const doc = new DOMParser().parseFromString(html, 'text/html');
+    const newBody = doc.querySelector('.container');
+    const newHeader = doc.querySelector('header');
+    if (newHeader) document.querySelector('header').innerHTML = newHeader.innerHTML;
+    if (newBody) document.querySelector('.container').innerHTML = newBody.innerHTML;
+    document.getElementById('logPanel').scrollTop = document.getElementById('logPanel').scrollHeight;
+  } catch {}
+}, 3000);
+</script>
 </div>
 </body>
 </html>`
