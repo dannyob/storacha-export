@@ -33,6 +33,14 @@ export async function exportUpload(options: ExportUploadOptions): Promise<void> 
   const fetcher = new GatewayFetcher(gatewayUrl)
 
   // Check if we already have partial manifest data — skip straight to repair
+  // Quick check: if backend already has it pinned, skip everything
+  if (await backend.hasContent(rootCid)) {
+    queue.markComplete(rootCid, backend.name, 0)
+    onProgress?.({ type: 'done', rootCid, bytes: 0 })
+    log('INFO', `${tag} Already pinned in ${backend.name}`)
+    return
+  }
+
   const existingProgress = manifest.getProgress(rootCid)
   if (existingProgress.total > 0 && existingProgress.missing > 0 && manifest.isRepairable(rootCid)) {
     log('INFO', `${tag} Resuming repair: ${existingProgress.seen}/${existingProgress.total} blocks, ${existingProgress.missing} missing`)
