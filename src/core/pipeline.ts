@@ -1,4 +1,6 @@
 import { Readable, PassThrough } from 'node:stream'
+import { CarBlockIterator } from '@ipld/car'
+import * as dagPB from '@ipld/dag-pb'
 import { GatewayFetcher } from './fetcher.js'
 import { repairUpload } from './repair.js'
 import type { UploadQueue } from './queue.js'
@@ -101,37 +103,81 @@ export async function exportUpload(options: ExportUploadOptions): Promise<void> 
         throw new Error(`Gateway returned ${res.status}: ${res.statusText}`)
       }
 
-      // Stream raw CAR bytes directly to backend — no parsing, no tee, just like v1
+      // Stream raw CAR bytes to backend, tee a copy for block tracking
       const nodeStream = Readable.fromWeb(res.body! as any)
       let byteCount = 0
+      let trackedBlocks = 0
+      let trackedTotal: number | undefined
       let lastProgressTime = Date.now()
       const countingStream = new PassThrough({
         transform(chunk, _encoding, callback) {
           byteCount += chunk.length
           const now = Date.now()
           if (now - lastProgressTime > 3000) {
-            onProgress?.({ type: 'progress', rootCid, bytes: byteCount, blocks: 0 })
+            onProgress?.({ type: 'progress', rootCid, bytes: byteCount, blocks: trackedBlocks, totalBlocks: trackedTotal })
             lastProgressTime = now
           }
           callback(null, chunk)
         },
       })
 
+      const backendStream = new PassThrough()
+      const trackingStream = new PassThrough({ highWaterMark: 1024 * 1024 })
+
       nodeStream.on('error', (err) => countingStream.destroy(err))
-      countingStream.on('error', () => {})
+      backendStream.on('error', () => {})
+      trackingStream.on('error', () => {})
+      countingStream.on('error', () => { backendStream.destroy(); trackingStream.destroy() })
+
       nodeStream.pipe(countingStream)
+      countingStream.pipe(backendStream)
+      countingStream.pipe(trackingStream)
 
       cleanupStreams = () => {
         abortController.abort()
         nodeStream.destroy()
         countingStream.destroy()
+        backendStream.destroy()
+        trackingStream.destroy()
       }
 
+      // Track blocks in parallel — if tracking fails/stalls, unpipe it so backend isn't blocked
+      const trackingPromise = (async () => {
+        try {
+          const iterator = await CarBlockIterator.fromIterable(trackingStream)
+          for await (const { cid, bytes } of iterator) {
+            const cidStr = cid.toString()
+            manifest.markSeen(rootCid, cidStr, cid.code)
+            if (cid.code === 0x70) {
+              try {
+                const node = dagPB.decode(bytes)
+                for (const link of node.Links) {
+                  manifest.addLink(rootCid, link.Hash.toString(), link.Hash.code, cidStr)
+                }
+              } catch {}
+            }
+            trackedBlocks++
+            if (trackedBlocks % 100 === 0) {
+              trackedTotal = manifest.getProgress(rootCid).total || undefined
+            }
+          }
+        } catch {
+          // Truncated or error
+        } finally {
+          // Critical: unpipe so backend stream isn't blocked if tracking exits early
+          countingStream.unpipe(trackingStream)
+          trackingStream.destroy()
+        }
+      })()
+
       await withTimeout(
-        backend.importCar(rootCid, countingStream as any),
+        backend.importCar(rootCid, backendStream as any),
         uploadTimeout,
         `CAR download ${rootCid.slice(0, 24)}...`,
       )
+
+      // Don't await trackingPromise — if backend finished, tracking can finish in background
+      trackingPromise.catch(() => {})
 
       // Success — verify it's pinned
       if (await backend.hasContent(rootCid)) {
