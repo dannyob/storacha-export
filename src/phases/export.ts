@@ -31,13 +31,14 @@ export async function runExport(options: ExportOptions): Promise<void> {
     async function worker() {
       while (idx < pending.length) {
         const upload = pending[idx++]
+        onProgress?.({ type: 'downloading', rootCid: upload.root_cid, spaceName: upload.space_name })
         await exportUpload({
           rootCid: upload.root_cid,
           backend,
           queue,
           manifest,
           gatewayUrl,
-          onProgress,
+          onProgress: onProgress && ((info) => onProgress({ ...info, spaceName: upload.space_name })),
         })
       }
     }
