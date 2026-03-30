@@ -67,10 +67,7 @@ export async function repairUpload(
       repairBytes += block.bytes.length
       manifest.markSeen(rootCid, row.block_cid, row.codec)
       onProgress?.(blocks.length, missing.length, repairBytes)
-
-      if ((i + 1) % 50 === 0) {
-        log('REPAIR', `  ${i + 1}/${missing.length} fetched (${blocks.length} new)`)
-      }
+      log('REPAIR', `  ${tag} ${blocks.length}/${missing.length} ${row.block_cid.slice(0, 20)}... ${block.bytes.length} bytes`)
     } catch (err: any) {
       log('REPAIR', `  FAIL ${row.block_cid.slice(0, 24)}...: ${err.message}`)
       failed++
