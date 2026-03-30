@@ -44,7 +44,10 @@ function phaseLabel(phase: DashboardState['phase']): string {
 
 export function generateDashboardHtml(state: DashboardState): string {
   const { phase, pid, stats, bySpace, spaceSizes, activeJobs, recentDone, recentErrors, logLines } = state
-  const { total, complete, error: errors, pending } = stats
+  const total = stats.total ?? 0
+  const complete = stats.complete ?? 0
+  const errors = stats.error ?? 0
+  const pending = stats.pending ?? 0
   const totalBytes = bySpace.reduce((s, r) => s + (r.bytes || 0), 0)
   let grandTotalBytes = 0
   for (const v of spaceSizes.values()) grandTotalBytes += v
