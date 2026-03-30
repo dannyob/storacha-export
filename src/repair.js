@@ -34,18 +34,22 @@ const fetchDispatcher = new Agent({
  * @param {string} rootCid
  * @param {string} gatewayUrl
  * @param {(info: object) => void} [onProgress]
+ * @param {object} [options]
+ * @param {string} [options.spaceName]
  * @returns {Promise<{stream: Readable, blockCount: number} | null>} CAR stream of missing blocks, or null if repair not possible
  */
-export async function repairTruncatedCar(rootCid, gatewayUrl, onProgress) {
+export async function repairTruncatedCar(rootCid, gatewayUrl, onProgress, options = {}) {
+  const { spaceName = '?' } = options
   const { decode } = await getDagPB()
+  const tag = `[${spaceName}] ${rootCid.slice(0, 24)}...`
 
-  log('REPAIR', `[${rootCid.slice(0, 24)}...] Attempting repair — re-downloading to find missing blocks`)
+  log('REPAIR', `${tag} Attempting repair — re-downloading to find missing blocks`)
 
   // Step 1: Re-download and parse the truncated CAR
   const carUrl = `${gatewayUrl.replace(/\/$/, '')}/ipfs/${rootCid}?format=car`
   const res = await fetch(carUrl, { dispatcher: fetchDispatcher })
   if (!res.ok) {
-    log('REPAIR', `[${rootCid.slice(0, 24)}...] Re-download failed: HTTP ${res.status}`)
+    log('REPAIR', `${tag} Re-download failed: HTTP ${res.status}`)
     return null
   }
 
@@ -75,20 +79,20 @@ export async function repairTruncatedCar(rootCid, gatewayUrl, onProgress) {
   const missingDagPB = missingUnique.filter(l => l.codec === DAG_PB_CODE)
 
   if (missingUnique.length === 0) {
-    log('REPAIR', `[${rootCid.slice(0, 24)}...] No missing blocks found — CAR may be complete`)
+    log('REPAIR', `${tag} No missing blocks found — CAR may be complete`)
     return null
   }
 
   if (missingDagPB.length > 0) {
-    log('REPAIR', `[${rootCid.slice(0, 24)}...] Cannot repair: ${missingDagPB.length} missing DAG-PB node(s) — tree structure incomplete`)
+    log('REPAIR', `${tag} Cannot repair: ${missingDagPB.length} missing DAG-PB node(s) — tree structure incomplete`)
     log('REPAIR', `  Missing structure nodes: ${missingDagPB.map(l => l.cidStr.slice(0, 24) + '...').join(', ')}`)
     return null
   }
 
   const missing = missingUnique.map(l => l.cidStr)
 
-  log('REPAIR', `[${rootCid.slice(0, 24)}...] Have ${seenCids.size} blocks, missing ${missing.length} — fetching individually`)
-  onProgress?.({ type: 'repair', rootCid, total: missing.length, fetched: 0 })
+  log('REPAIR', `${tag} Have ${seenCids.size} blocks, missing ${missing.length} — fetching individually`)
+  onProgress?.({ type: 'repair', rootCid, spaceName, total: missing.length, fetched: 0 })
 
   // Step 2: Fetch missing blocks
   const fetchedBlocks = []
@@ -113,7 +117,7 @@ export async function repairTruncatedCar(rootCid, gatewayUrl, onProgress) {
       fetchedBlocks.push({ cid, bytes: raw })
       if ((i + 1) % 50 === 0) {
         log('REPAIR', `  fetched ${i + 1}/${missing.length}`)
-        onProgress?.({ type: 'repair', rootCid, total: missing.length, fetched: i + 1 })
+        onProgress?.({ type: 'repair', rootCid, spaceName, total: missing.length, fetched: i + 1 })
       }
     } catch (e) {
       log('REPAIR', `  ERROR ${cidStr.slice(0, 24)}...: ${e.message}`)
@@ -122,15 +126,15 @@ export async function repairTruncatedCar(rootCid, gatewayUrl, onProgress) {
   }
 
   if (fetchedBlocks.length === 0) {
-    log('REPAIR', `[${rootCid.slice(0, 24)}...] Could not fetch any missing blocks`)
+    log('REPAIR', `${tag} Could not fetch any missing blocks`)
     return null
   }
 
   if (failures > 0) {
-    log('REPAIR', `[${rootCid.slice(0, 24)}...] ${failures} blocks could not be fetched — repair incomplete`)
+    log('REPAIR', `${tag} ${failures} blocks could not be fetched — repair incomplete`)
   }
 
-  log('REPAIR', `[${rootCid.slice(0, 24)}...] Fetched ${fetchedBlocks.length}/${missing.length} missing blocks, building repair CAR`)
+  log('REPAIR', `${tag} Fetched ${fetchedBlocks.length}/${missing.length} missing blocks, building repair CAR`)
 
   // Step 3: Build a CAR with just the missing blocks
   const { writer, out } = CarWriter.create(roots)
@@ -144,7 +148,7 @@ export async function repairTruncatedCar(rootCid, gatewayUrl, onProgress) {
   await drain
 
   const carBuffer = Buffer.concat(chunks)
-  log('REPAIR', `[${rootCid.slice(0, 24)}...] Repair CAR: ${(carBuffer.length / 1024 / 1024).toFixed(1)} MiB, ${fetchedBlocks.length} blocks`)
+  log('REPAIR', `${tag} Repair CAR: ${(carBuffer.length / 1024 / 1024).toFixed(1)} MiB, ${fetchedBlocks.length} blocks`)
 
   return {
     stream: Readable.from([carBuffer]),
