@@ -41,33 +41,47 @@ export class GatewayFetcher {
    */
   async fetchBlock(cidStr: string): Promise<Block> {
     const url = `${this.gatewayUrl.replace(/\/$/, '')}/ipfs/${cidStr}?format=raw`
-    const controller = new AbortController()
 
-    const doFetch = async (): Promise<Block> => {
-      const res = await fetch(url, { dispatcher: blockDispatcher, signal: controller.signal } as any)
+    for (let attempt = 0; attempt < 3; attempt++) {
+      const controller = new AbortController()
 
-      if (!res.ok) {
-        throw new Error(`Block fetch failed: HTTP ${res.status}`)
+      try {
+        const block = await Promise.race([
+          (async (): Promise<Block> => {
+            const res = await fetch(url, { dispatcher: blockDispatcher, signal: controller.signal } as any)
+
+            if (res.status === 429 || res.status >= 500) {
+              const retryAfter = res.headers.get('retry-after')
+              const delay = retryAfter ? parseInt(retryAfter, 10) * 1000 : Math.min(2000 * Math.pow(2, attempt), 30000)
+              await res.body?.cancel()
+              await new Promise(r => setTimeout(r, delay))
+              throw new Error(`HTTP ${res.status} (retrying)`)
+            }
+
+            if (!res.ok) {
+              throw new Error(`Block fetch failed: HTTP ${res.status}`)
+            }
+
+            const bytes = new Uint8Array(await res.arrayBuffer())
+            const expectedCid = CID.parse(cidStr)
+            const hash = await sha256.digest(bytes)
+
+            if (!expectedCid.multihash.bytes.every((b, i) => b === hash.bytes[i])) {
+              throw new Error(`Hash mismatch for ${cidStr}`)
+            }
+
+            return { cid: expectedCid, bytes }
+          })(),
+          new Promise<never>((_, reject) =>
+            setTimeout(() => { controller.abort(); reject(new Error('Block fetch timeout (30s)')) }, 30000)
+          ),
+        ])
+        return block
+      } catch (err: any) {
+        if (attempt === 2 || !err.message.includes('retrying')) throw err
       }
-
-      const bytes = new Uint8Array(await res.arrayBuffer())
-      const expectedCid = CID.parse(cidStr)
-      const hash = await sha256.digest(bytes)
-
-      if (!expectedCid.multihash.bytes.every((b, i) => b === hash.bytes[i])) {
-        throw new Error(`Hash mismatch for ${cidStr}`)
-      }
-
-      return { cid: expectedCid, bytes }
     }
-
-    // Hard timeout via Promise.race — guaranteed to reject even if fetch ignores abort
-    return Promise.race([
-      doFetch(),
-      new Promise<never>((_, reject) =>
-        setTimeout(() => { controller.abort(); reject(new Error('Block fetch timeout (30s)')) }, 30000)
-      ),
-    ])
+    throw new Error('Block fetch failed after retries')
   }
 
   /**
