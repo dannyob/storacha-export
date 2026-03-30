@@ -281,6 +281,32 @@ async function _main(argv: string[]) {
   statusMessage = `Enumerated ${enumCount} uploads`
   addLogLine(`Enumeration complete: ${enumCount} uploads queued`)
 
+  // --- Quick sweep: check which root CIDs the backend already has ---
+  for (const backend of backends) {
+    const pending = queue.getPending(backend.name)
+    if (pending.length === 0) continue
+    statusMessage = `Checking ${backend.name} for existing content (${pending.length} uploads)...`
+    log('INFO', `Scanning ${backend.name} for already-exported CIDs...`)
+    let found = 0
+    for (const [i, upload] of pending.entries()) {
+      try {
+        if (await backend.hasContent(upload.root_cid)) {
+          queue.markComplete(upload.root_cid, backend.name, 0)
+          found++
+        }
+      } catch {
+        // skip — will be attempted during export
+      }
+      if ((i + 1) % 100 === 0) {
+        statusMessage = `Checking ${backend.name}... ${i + 1}/${pending.length} (${found} already exported)`
+      }
+    }
+    if (found > 0) {
+      log('INFO', `Found ${found}/${pending.length} already exported in ${backend.name}`)
+    }
+  }
+  statusMessage = `Ready — ${queue.getStats().pending} pending, ${queue.getStats().complete} already done`
+
   // --- Verify only? ---
   if (opts.verify) {
     phase = 'verify'
