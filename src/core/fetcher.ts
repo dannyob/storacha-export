@@ -6,7 +6,7 @@ import type { BlockStream, Block } from './blocks.js'
 import { log } from '../util/log.js'
 
 const fetchDispatcher = new Agent({
-  bodyTimeout: 600000,   // 10 min between chunks
+  bodyTimeout: 120000,   // 2 min between chunks — fail fast on stalls
   headersTimeout: 60000, // 60s for initial response
 })
 
