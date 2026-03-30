@@ -1,3 +1,4 @@
+import * as dagPB from '@ipld/dag-pb'
 import type { BlockManifest } from './manifest.js'
 import type { Block } from './blocks.js'
 import { log } from '../util/log.js'
@@ -30,15 +31,9 @@ export async function repairUpload(
   const { hasBlock, onProgress } = options
   const tag = rootCid.slice(0, 24) + '...'
 
-  const missing = manifest.getMissing(rootCid)
+  let missing = manifest.getMissing(rootCid)
   if (missing.length === 0) {
     log('REPAIR', `[${tag}] No missing blocks`)
-    return null
-  }
-
-  const missingDagPB = manifest.getMissingDagPB(rootCid)
-  if (missingDagPB.length > 0) {
-    log('REPAIR', `[${tag}] Cannot repair: ${missingDagPB.length} missing DAG-PB node(s)`)
     return null
   }
 
@@ -48,35 +43,50 @@ export async function repairUpload(
   let skipped = 0
   let failed = 0
   let repairBytes = 0
+  let totalFetched = 0
 
-  for (const [i, row] of missing.entries()) {
-    // Check if backend already has this block
-    if (hasBlock) {
+  // Iterative repair: fetch missing blocks, decode dag-pb to discover more, repeat
+  let pass = 0
+  while (missing.length > 0) {
+    pass++
+    if (pass > 1) log('REPAIR', `[${tag}] Pass ${pass}: ${missing.length} more missing blocks`)
+
+    for (const row of missing) {
       try {
-        if (i === 0) log('REPAIR', `  ${tag} checking backend for block 1/${missing.length}...`)
-        if (await hasBlock(row.block_cid)) {
-          skipped++
-          manifest.markSeen(rootCid, row.block_cid, row.codec)
-          if (skipped % 100 === 0) log('REPAIR', `  ${tag} ${skipped} skipped (backend has them)`)
-          continue
+        if (totalFetched === 0) log('REPAIR', `  ${tag} fetching block 1: ${row.block_cid.slice(0, 20)}...`)
+        const block = await fetchBlock(row.block_cid)
+        blocks.push(block)
+        totalFetched++
+        repairBytes += block.bytes.length
+        manifest.markSeen(rootCid, row.block_cid, row.codec)
+
+        // If it's a dag-pb node, extract links to discover more blocks
+        if (block.cid.code === 0x70) {
+          try {
+            const node = dagPB.decode(block.bytes)
+            for (const link of node.Links) {
+              manifest.addLink(rootCid, link.Hash.toString(), link.Hash.code, block.cid.toString())
+            }
+          } catch {}
         }
-      } catch { /* couldn't check, fetch it */ }
+
+        const totalMissing = manifest.getProgress(rootCid).missing
+        onProgress?.(totalFetched, totalFetched + totalMissing, repairBytes)
+        log('REPAIR', `  ${tag} ${totalFetched} fetched (${totalMissing} remaining) ${row.block_cid.slice(0, 20)}... ${block.bytes.length} bytes`)
+      } catch (err: any) {
+        log('REPAIR', `  FAIL ${row.block_cid.slice(0, 24)}...: ${err.message}`)
+        failed++
+      }
+      // Throttle to ~1 req/s to avoid 429s from the gateway
+      await new Promise(r => setTimeout(r, 1000))
     }
 
-    try {
-      if (blocks.length === 0 && failed === 0) log('REPAIR', `  ${tag} fetching block 1: ${row.block_cid.slice(0, 20)}...`)
-      const block = await fetchBlock(row.block_cid)
-      blocks.push(block)
-      repairBytes += block.bytes.length
-      manifest.markSeen(rootCid, row.block_cid, row.codec)
-      onProgress?.(blocks.length, missing.length, repairBytes)
-      log('REPAIR', `  ${tag} ${blocks.length}/${missing.length} ${row.block_cid.slice(0, 20)}... ${block.bytes.length} bytes`)
-    } catch (err: any) {
-      log('REPAIR', `  FAIL ${row.block_cid.slice(0, 24)}...: ${err.message}`)
-      failed++
+    // Check if decoding dag-pb blocks revealed more missing blocks
+    missing = manifest.getMissing(rootCid)
+    if (pass > 20) {
+      log('REPAIR', `[${tag}] Too many passes (${pass}), stopping`)
+      break
     }
-    // Throttle to ~1 req/s to avoid 429s from the gateway
-    await new Promise(r => setTimeout(r, 1000))
   }
 
   if (skipped > 0) {

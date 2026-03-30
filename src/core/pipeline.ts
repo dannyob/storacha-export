@@ -209,11 +209,12 @@ export async function exportUpload(options: ExportUploadOptions): Promise<void> 
   const progress = manifest.getProgress(rootCid)
   if (progress.total > 0) {
     queue.setStatus(rootCid, backend.name, 'partial')
-    log('INFO', `${tag} Partial: ${progress.seen}/${progress.total} blocks`)
+    const missingPB = manifest.getMissingDagPB(rootCid).length
+    log('INFO', `${tag} Partial: ${progress.seen}/${progress.total} blocks (${progress.missing} missing, ${missingPB} dag-pb)`)
   }
 
-  // Attempt inline repair
-  if (progress.total > 0 && manifest.isRepairable(rootCid)) {
+  // Attempt inline repair — even with missing dag-pb, we can fetch them individually
+  if (progress.total > 0 && progress.missing > 0) {
     queue.setStatus(rootCid, backend.name, 'repairing')
     onProgress?.({ type: 'repairing', rootCid, totalBlocks: progress.missing })
 
