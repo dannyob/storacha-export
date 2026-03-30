@@ -86,4 +86,9 @@ export class BlockManifest {
   clear(rootCid: string): void {
     this._clear.run({ rootCid })
   }
+
+  /** Reset all blocks to unseen but keep the DAG structure (links) intact */
+  resetSeen(rootCid: string): void {
+    this.db.prepare('UPDATE blocks SET seen = 0 WHERE root_cid = @rootCid').run({ rootCid })
+  }
 }
