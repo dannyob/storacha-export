@@ -122,10 +122,23 @@ export async function executeJob(job, backends, queue, options = {}) {
           await be.importCar(job.root_cid, repair.stream)
         }
         if (repair.complete) {
-          queue.markDone(job.root_cid, job.backend, 0)
-          onProgress?.({ type: 'done', rootCid: job.root_cid, spaceName: job.space_name, bytes: 0 })
-          log('REPAIR', `[${job.space_name}] ${job.root_cid.slice(0, 24)}... repaired successfully`)
-          return
+          // Verify the root is actually pinned (complete DAG)
+          let verified = false
+          for (const be of backends) {
+            if (await be.hasContent(job.root_cid)) {
+              verified = true
+            } else {
+              log('REPAIR', `[${job.space_name}] ${job.root_cid.slice(0, 24)}... repair imported but root not pinned in ${be.name} — DAG may still be incomplete`)
+              verified = false
+              break
+            }
+          }
+          if (verified) {
+            queue.markDone(job.root_cid, job.backend, 0)
+            onProgress?.({ type: 'done', rootCid: job.root_cid, spaceName: job.space_name, bytes: 0 })
+            log('REPAIR', `[${job.space_name}] ${job.root_cid.slice(0, 24)}... repaired and verified`)
+            return
+          }
         }
       }
     } catch (repairErr) {
