@@ -65,7 +65,7 @@ export class UploadQueue {
 
     this._resetForRetry = db.prepare(`
       UPDATE uploads SET status = 'pending', error_msg = NULL, updated_at = datetime('now')
-      WHERE status IN ('error', 'partial', 'downloading')
+      WHERE status IN ('error', 'partial', 'downloading', 'repairing')
     `)
 
     this._getStats = db.prepare(`
