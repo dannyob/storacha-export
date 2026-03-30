@@ -69,10 +69,15 @@ export function generateDashboardHtml(state: DashboardState): string {
       </tr>`
   }).join('\n')
 
+  function cidLink(cid: string, truncate = true): string {
+    const display = truncate ? cid.slice(0, 24) + '...' : cid
+    return `<a href="https://${cid}.ipfs.inbrowser.link" target="_blank" rel="noopener" style="color:inherit;text-decoration:underline dotted;text-underline-offset:2px">${display}</a>`
+  }
+
   const activeRows = activeJobs.map(j => `
     <tr>
       <td>${j.space_name}</td>
-      <td class="cid" title="${j.root_cid}">${j.root_cid.slice(0, 24)}...</td>
+      <td class="cid">${cidLink(j.root_cid)}</td>
       <td>${j.status}</td>
     </tr>
   `).join('\n')
@@ -80,14 +85,14 @@ export function generateDashboardHtml(state: DashboardState): string {
   const recentDoneRows = recentDone.map(j => `
     <tr>
       <td>${j.space_name}</td>
-      <td class="cid" title="${j.root_cid}">${j.root_cid.slice(0, 24)}...</td>
+      <td class="cid">${cidLink(j.root_cid, false)}</td>
     </tr>
   `).join('\n')
 
   const errorRows = recentErrors.map(e => `
     <tr>
       <td>${e.space_name}</td>
-      <td class="cid" title="${e.root_cid}">${e.root_cid.slice(0, 24)}...</td>
+      <td class="cid">${cidLink(e.root_cid, false)}</td>
       <td class="errmsg">${(e.error_msg || '').replace(/&/g, '&amp;').replace(/</g, '&lt;')}</td>
     </tr>
   `).join('\n')
