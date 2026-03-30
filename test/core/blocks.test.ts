@@ -7,6 +7,8 @@ import * as dagPB from '@ipld/dag-pb'
 import { CID } from 'multiformats/cid'
 import { sha256 } from 'multiformats/hashes/sha2'
 import fs from 'node:fs'
+import path from 'node:path'
+import os from 'node:os'
 
 async function makeRawBlock(data: string): Promise<{ cid: CID; bytes: Uint8Array }> {
   const bytes = new TextEncoder().encode(data)
@@ -74,7 +76,9 @@ describe('carToBlockStream', () => {
 
 describe('trackBlocks', () => {
   it('records blocks and links in manifest as they pass through', async () => {
-    const db = createDatabase('/tmp/storacha-v2-track-test.db')
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'storacha-v2-track-'))
+    const dbPath = path.join(tmpDir, 'test.db')
+    const db = createDatabase(dbPath)
     const manifest = new BlockManifest(db)
 
     const leaf1 = await makeRawBlock('hello')
@@ -100,13 +104,13 @@ describe('trackBlocks', () => {
     expect(progress.missing).toBe(0)
 
     db.close()
-    try { fs.unlinkSync('/tmp/storacha-v2-track-test.db') } catch {}
-    try { fs.unlinkSync('/tmp/storacha-v2-track-test.db-wal') } catch {}
-    try { fs.unlinkSync('/tmp/storacha-v2-track-test.db-shm') } catch {}
+    fs.rmSync(tmpDir, { recursive: true, force: true })
   })
 
   it('handles truncated CARs — records what it can', async () => {
-    const db = createDatabase('/tmp/storacha-v2-track-trunc-test.db')
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'storacha-v2-track-trunc-'))
+    const dbPath = path.join(tmpDir, 'test.db')
+    const db = createDatabase(dbPath)
     const manifest = new BlockManifest(db)
 
     const leaf1 = await makeRawBlock('hello')
@@ -126,8 +130,6 @@ describe('trackBlocks', () => {
     expect(progress.total).toBeGreaterThanOrEqual(progress.seen)
 
     db.close()
-    try { fs.unlinkSync('/tmp/storacha-v2-track-trunc-test.db') } catch {}
-    try { fs.unlinkSync('/tmp/storacha-v2-track-trunc-test.db-wal') } catch {}
-    try { fs.unlinkSync('/tmp/storacha-v2-track-trunc-test.db-shm') } catch {}
+    fs.rmSync(tmpDir, { recursive: true, force: true })
   })
 })
