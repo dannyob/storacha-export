@@ -5,14 +5,13 @@ import { log } from '../util/log.js'
 
 export interface RepairResult {
   fetched: number
-  skipped: number
   failed: number
   complete: boolean
-  blocks: Block[]
 }
 
 export interface RepairOptions {
   onProgress?: (fetched: number, total: number, bytes: number) => void
+  onBlock?: (block: Block) => Promise<void>
   throttleMs?: number
 }
 
@@ -28,7 +27,7 @@ export async function repairUpload(
   fetchBlock: (cidStr: string) => Promise<Block>,
   options: RepairOptions = {},
 ): Promise<RepairResult | null> {
-  const { onProgress, throttleMs = 1000 } = options
+  const { onProgress, onBlock, throttleMs = 1000 } = options
   const tag = rootCid.slice(0, 24) + '...'
 
   let missing = manifest.getMissing(rootCid)
@@ -39,11 +38,9 @@ export async function repairUpload(
 
   log('REPAIR', `[${tag}] ${missing.length} missing blocks — fetching`)
 
-  const blocks: Block[] = []
-  let skipped = 0
+  let totalFetched = 0
   let failed = 0
   let repairBytes = 0
-  let totalFetched = 0
 
   // Iterative repair: fetch missing blocks, decode dag-pb to discover more, repeat
   let pass = 0
@@ -51,14 +48,19 @@ export async function repairUpload(
     pass++
     if (pass > 1) log('REPAIR', `[${tag}] Pass ${pass}: ${missing.length} more missing blocks`)
 
+    let progressThisPass = false
+
     for (const row of missing) {
       try {
         if (totalFetched === 0) log('REPAIR', `  ${tag} fetching block 1: ${row.block_cid.slice(0, 20)}...`)
         const block = await fetchBlock(row.block_cid)
-        blocks.push(block)
         totalFetched++
+        progressThisPass = true
         repairBytes += block.bytes.length
         manifest.markSeen(rootCid, row.block_cid, row.codec)
+
+        // Push block to backend immediately — don't accumulate in memory
+        if (onBlock) await onBlock(block)
 
         // If it's a dag-pb node, extract links to discover more blocks
         if (block.cid.code === 0x70) {
@@ -82,18 +84,21 @@ export async function repairUpload(
 
     // Check if decoding dag-pb blocks revealed more missing blocks
     missing = manifest.getMissing(rootCid)
-    if (pass > 20) {
+
+    // Stop if no progress was made this pass (all remaining blocks are unfetchable)
+    if (!progressThisPass) {
+      log('REPAIR', `[${tag}] No progress in pass ${pass}, stopping`)
+      break
+    }
+    if (pass > 50) {
       log('REPAIR', `[${tag}] Too many passes (${pass}), stopping`)
       break
     }
   }
 
-  if (skipped > 0) {
-    log('REPAIR', `[${tag}] ${skipped} blocks already in backend`)
-  }
+  const remaining = manifest.getMissing(rootCid).length
+  const complete = failed === 0 && remaining === 0
+  log('REPAIR', `[${tag}] Repair: ${totalFetched} fetched, ${failed} failed, ${remaining} remaining`)
 
-  const complete = failed === 0
-  log('REPAIR', `[${tag}] Repair: ${blocks.length} fetched, ${skipped} skipped, ${failed} failed`)
-
-  return { fetched: blocks.length, skipped, failed, complete, blocks }
+  return { fetched: totalFetched, failed, complete }
 }
