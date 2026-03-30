@@ -114,7 +114,7 @@ export class JobQueue {
   }
 
   resetErrors() {
-    this._resetErrors.run()
+    return this._resetErrors.run()
   }
 
   resetInProgress() {

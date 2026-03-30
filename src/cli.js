@@ -221,12 +221,13 @@ async function _main(argv) {
   const queue = new JobQueue(dbPath)
 
   if (continuing) {
-    const reset = queue.resetInProgress()
-    if (reset.changes > 0) {
-      console.log(`Reset ${reset.changes} stuck in-progress job(s) from previous run.`)
+    const resetStuck = queue.resetInProgress()
+    const resetErrors = queue.resetErrors()
+    if (resetStuck.changes > 0 || resetErrors.changes > 0) {
+      console.log(`Reset ${resetStuck.changes} stuck job(s) and ${resetErrors.changes} failed job(s) for retry.`)
     }
     const prev = queue.getStats()
-    console.log(`Resuming: ${prev.done} done, ${prev.error} errors, ${prev.pending} pending from previous run.`)
+    console.log(`Resuming: ${prev.done} done, ${prev.pending} pending from previous run.`)
   }
 
   // --- Collect space sizes and sort smallest first ---
