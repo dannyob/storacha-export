@@ -352,9 +352,11 @@ async function _main(argv) {
     onProgress: (info) => {
       if (info.type === 'done') {
         completed++
+        const cidShort = info.rootCid.slice(0, 24) + '...'
+        const size = info.bytes ? filesize(info.bytes) : ''
         bar.increment({
-          cid: info.rootCid.slice(0, 20) + '...',
-          rate: info.bytes ? filesize(info.bytes) : '',
+          cid: `[${info.spaceName}] ${cidShort}`,
+          rate: size,
         })
       } else if (info.type === 'downloading') {
         log('DOWNLOADING', `[${info.spaceName}] ${info.rootCid.slice(0, 24)}... ${filesize(info.bytes)} so far`)
