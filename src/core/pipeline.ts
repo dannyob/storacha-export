@@ -74,9 +74,15 @@ export async function exportUpload(options: ExportUploadOptions): Promise<void> 
   // Attempt to download the full CAR — stream raw bytes directly to backend
   let lastError: Error | undefined
   for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    const abortController = new AbortController()
+    let cleanupStreams: (() => void) | undefined
+
     try {
       const url = `${gatewayUrl.replace(/\/$/, '')}/ipfs/${rootCid}?format=car`
-      const res = await fetch(url, { dispatcher: fetcher.dispatcher } as any)
+      const res = await fetch(url, {
+        dispatcher: fetcher.dispatcher,
+        signal: abortController.signal,
+      } as any)
 
       if (!res.ok) {
         await res.body?.cancel()
@@ -110,17 +116,26 @@ export async function exportUpload(options: ExportUploadOptions): Promise<void> 
       nodeStream.on('error', (err) => countingStream.destroy(err))
       nodeStream.pipe(countingStream)
 
-      // Tee the stream: one copy goes to backend, the other to block tracking
+      // Tee the stream: backend gets raw bytes, tracking parses blocks in parallel
       const backendStream = new PassThrough()
       const trackingStream = new PassThrough()
-      // Handle errors on all streams to prevent unhandled 'error' crashes
+
       backendStream.on('error', () => {})
       trackingStream.on('error', () => {})
       countingStream.on('error', () => { backendStream.destroy(); trackingStream.destroy() })
       countingStream.pipe(backendStream)
       countingStream.pipe(trackingStream)
 
-      // Track blocks from the tee'd stream (non-blocking — errors don't stop the import)
+      // Cleanup function to tear down all streams on timeout/error
+      cleanupStreams = () => {
+        abortController.abort()
+        nodeStream.destroy()
+        countingStream.destroy()
+        backendStream.destroy()
+        trackingStream.destroy()
+      }
+
+      // Track blocks from the tee'd stream — if tracking exits early, unpipe to prevent stall
       const trackingPromise = (async () => {
         try {
           const iterator = await CarBlockIterator.fromIterable(trackingStream)
@@ -141,7 +156,10 @@ export async function exportUpload(options: ExportUploadOptions): Promise<void> 
             }
           }
         } catch {
-          // Truncated — tracking got what it got
+          // Truncated or error — unpipe tracking so backend leg isn't stalled
+        } finally {
+          countingStream.unpipe(trackingStream)
+          trackingStream.destroy()
         }
       })()
 
@@ -167,6 +185,7 @@ export async function exportUpload(options: ExportUploadOptions): Promise<void> 
 
     } catch (err: any) {
       lastError = err
+      cleanupStreams?.()
       if (attempt < maxRetries) {
         const delay = Math.min(1000 * Math.pow(2, attempt), 30000)
         onProgress?.({ type: 'retry', rootCid, attempt, delay, error: err.message })
