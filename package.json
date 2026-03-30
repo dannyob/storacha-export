@@ -1,6 +1,6 @@
 {
   "name": "storacha-export",
-  "version": "0.1.0",
+  "version": "2.0.0",
   "description": "Export Storacha space content to pluggable storage backends",
   "type": "module",
   "bin": {
@@ -10,9 +10,14 @@
     "test": "node --test 'test/**/*.test.js' 'test/*.test.js'",
     "start": "node bin/storacha-export.js",
     "build": "tsc",
+    "prepublishOnly": "npm run build",
     "test:ts": "vitest run",
     "test:watch": "vitest"
   },
+  "files": [
+    "dist",
+    "bin"
+  ],
   "license": "AGPL-3.0-or-later",
   "engines": {
     "node": ">=20"
