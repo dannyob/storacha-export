@@ -64,7 +64,7 @@ async function _main(argv: string[]) {
   let queue: UploadQueue | undefined
   let selectedSpaceNames: string[] = []
   let sessionStart = new Date().toISOString().replace('T', ' ').slice(0, 19)
-  const activeJobInfo = new Map<string, { spaceName: string; bytes: number; blocks: number; totalBlocks?: number; startedAt: number; mode: 'car' | 'repair' }>()
+  const activeJobInfo = new Map<string, { spaceName: string; bytes: number; prevBytes: number; prevTime: number; blocks: number; totalBlocks?: number; startedAt: number; mode: 'car' | 'repair' }>()
 
   function addLogLine(msg: string) {
     logLines.push(msg)
@@ -80,16 +80,24 @@ async function _main(argv: string[]) {
       const live = activeJobInfo.get(j.root_cid)
       const elapsed = live ? Math.round((Date.now() - live.startedAt) / 1000) : 0
       let detail = j.status
-      if (live?.mode === 'repair') {
-        const total = live.totalBlocks ?? '?'
-        const pct = live.totalBlocks ? ` (${Math.round(100 * live.blocks / live.totalBlocks)}%)` : ''
-        detail = `repairing: ${live.blocks}/${total} blocks${pct} / ${filesize(live.bytes)} / ${elapsed}s`
-      } else if (live && live.bytes > 0) {
-        const blockStr = live.totalBlocks ? `${live.blocks}/${live.totalBlocks}` : `${live.blocks}`
-        const pct = live.totalBlocks ? ` (${Math.round(100 * live.blocks / live.totalBlocks)}%)` : ''
-        detail = `${filesize(live.bytes)} / ${blockStr} blocks${pct} / ${elapsed}s`
-      } else if (live) {
-        detail = `connecting... ${elapsed}s`
+      if (live) {
+        // Calculate rate from last update
+        const now = Date.now()
+        const dt = (now - live.prevTime) / 1000
+        const db = live.bytes - live.prevBytes
+        const rate = dt > 0 ? db / dt : 0
+        const stalled = live.bytes > 0 && rate === 0 && dt > 10
+        const rateStr = rate > 0 ? `${filesize(rate)}/s` : (stalled ? 'STALLED' : 'waiting')
+
+        if (live.mode === 'repair') {
+          const total = live.totalBlocks ?? '?'
+          const pct = live.totalBlocks ? ` (${Math.round(100 * live.blocks / live.totalBlocks)}%)` : ''
+          detail = `repairing: ${live.blocks}/${total} blocks${pct} / ${filesize(live.bytes)} / ${elapsed}s`
+        } else if (live.bytes > 0) {
+          detail = `${filesize(live.bytes)} / ${rateStr} / ${elapsed}s`
+        } else {
+          detail = `connecting... ${elapsed}s`
+        }
       }
       return { ...j, status: detail }
     })
@@ -132,18 +140,25 @@ async function _main(argv: string[]) {
     if (cid) {
       switch (info.type) {
         case 'downloading':
-          activeJobInfo.set(cid, { spaceName: info.spaceName || '', bytes: 0, blocks: 0, startedAt: Date.now(), mode: 'car' })
+          activeJobInfo.set(cid, { spaceName: info.spaceName || '', bytes: 0, prevBytes: 0, prevTime: Date.now(), blocks: 0, startedAt: Date.now(), mode: 'car' })
           break
         case 'progress':
           { const entry = activeJobInfo.get(cid)
-            if (entry) { entry.bytes = info.bytes; entry.blocks = info.blocks; if (info.totalBlocks) entry.totalBlocks = info.totalBlocks } }
+            if (entry) {
+              entry.prevBytes = entry.bytes; entry.prevTime = Date.now()
+              entry.bytes = info.bytes; entry.blocks = info.blocks
+              if (info.totalBlocks) entry.totalBlocks = info.totalBlocks
+            } }
           break
         case 'repairing':
-          activeJobInfo.set(cid, { spaceName: info.spaceName || '', bytes: 0, blocks: 0, totalBlocks: info.totalBlocks, startedAt: Date.now(), mode: 'repair' })
+          activeJobInfo.set(cid, { spaceName: info.spaceName || '', bytes: 0, prevBytes: 0, prevTime: Date.now(), blocks: 0, totalBlocks: info.totalBlocks, startedAt: Date.now(), mode: 'repair' })
           break
         case 'repair-progress':
           { const entry = activeJobInfo.get(cid)
-            if (entry) { entry.bytes = info.bytes; entry.blocks = info.fetched; entry.totalBlocks = info.total; entry.mode = 'repair' } }
+            if (entry) {
+              entry.prevBytes = entry.bytes; entry.prevTime = Date.now()
+              entry.bytes = info.bytes; entry.blocks = info.fetched; entry.totalBlocks = info.total; entry.mode = 'repair'
+            } }
           break
         case 'done':
         case 'error':
