@@ -125,6 +125,17 @@ export class KuboBackend implements ExportBackend {
     await res.text()
   }
 
+  async getContentSize(rootCid: string): Promise<number | null> {
+    try {
+      const res = await fetch(`${this.apiUrl}/api/v0/dag/stat?arg=${rootCid}`, { method: 'POST' })
+      if (!res.ok) return null
+      const data = await res.json() as { Size?: number }
+      return data.Size ?? null
+    } catch {
+      return null
+    }
+  }
+
   async verifyDag(rootCid: string): Promise<{ valid: boolean; error?: string }> {
     try {
       const res = await fetch(`${this.apiUrl}/api/v0/dag/stat?arg=${rootCid}`, { method: 'POST' })

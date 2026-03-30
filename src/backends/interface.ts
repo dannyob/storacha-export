@@ -22,6 +22,9 @@ export interface ExportBackend {
   /** Override repair strategy entirely */
   repair?(rootCid: string, manifest: BlockManifest, fetchBlock: (cid: string) => Promise<Block>): Promise<boolean>
 
+  /** Get the total size of a DAG in bytes (if available) */
+  getContentSize?(rootCid: string): Promise<number | null>
+
   /** Deep verification — check that the full DAG is traversable */
   verifyDag?(rootCid: string): Promise<{ valid: boolean; error?: string }>
 }
