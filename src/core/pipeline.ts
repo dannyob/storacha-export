@@ -13,11 +13,22 @@ export interface ExportUploadOptions {
   manifest: BlockManifest
   gatewayUrl: string
   maxRetries?: number
+  uploadTimeout?: number
   onProgress?: (info: { type: string; [key: string]: any }) => void
 }
 
+function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(`Timeout after ${Math.round(ms / 1000)}s: ${label}`)), ms)
+    promise.then(
+      (v) => { clearTimeout(timer); resolve(v) },
+      (e) => { clearTimeout(timer); reject(e) },
+    )
+  })
+}
+
 export async function exportUpload(options: ExportUploadOptions): Promise<void> {
-  const { rootCid, backend, queue, manifest, gatewayUrl, maxRetries = 3, onProgress } = options
+  const { rootCid, backend, queue, manifest, gatewayUrl, maxRetries = 3, uploadTimeout = 300000, onProgress } = options
   const tag = `[${rootCid.slice(0, 24)}...]`
   const fetcher = new GatewayFetcher(gatewayUrl)
 
@@ -80,7 +91,11 @@ export async function exportUpload(options: ExportUploadOptions): Promise<void> 
         }
       })()
 
-      await backend.importCar(rootCid, counted)
+      await withTimeout(
+        backend.importCar(rootCid, counted),
+        uploadTimeout,
+        `CAR download ${rootCid.slice(0, 24)}...`,
+      )
 
       // Success — verify it's pinned
       if (await backend.hasContent(rootCid)) {
