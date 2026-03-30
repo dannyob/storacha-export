@@ -8,7 +8,10 @@
   },
   "scripts": {
     "test": "node --test 'test/**/*.test.js' 'test/*.test.js'",
-    "start": "node bin/storacha-export.js"
+    "start": "node bin/storacha-export.js",
+    "build": "tsc",
+    "test:ts": "vitest run",
+    "test:watch": "vitest"
   },
   "license": "AGPL-3.0-or-later",
   "engines": {
@@ -28,6 +31,9 @@
     "undici": "^7.24.6"
   },
   "devDependencies": {
-    "@types/better-sqlite3": "^7.6.13"
+    "@types/better-sqlite3": "^7.6.13",
+    "@types/node": "^25.5.0",
+    "typescript": "^6.0.2",
+    "vitest": "^4.1.2"
   }
 }
