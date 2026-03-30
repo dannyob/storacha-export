@@ -47,7 +47,7 @@ export async function detectCredentials(): Promise<CredentialResult> {
 export async function login(email: string) {
   const store = new StoreConf({ profile: 'storacha-export' })
   const client = await create({ store })
-  const account = await client.login(email)
+  const account = await client.login(email as `${string}@${string}`)
   await account.plan.wait()
   return client
 }
