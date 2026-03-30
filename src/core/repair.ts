@@ -53,15 +53,18 @@ export async function repairUpload(
     // Check if backend already has this block
     if (hasBlock) {
       try {
+        if (i === 0) log('REPAIR', `  ${tag} checking backend for block 1/${missing.length}...`)
         if (await hasBlock(row.block_cid)) {
           skipped++
           manifest.markSeen(rootCid, row.block_cid, row.codec)
+          if (skipped % 100 === 0) log('REPAIR', `  ${tag} ${skipped} skipped (backend has them)`)
           continue
         }
       } catch { /* couldn't check, fetch it */ }
     }
 
     try {
+      if (blocks.length === 0 && failed === 0) log('REPAIR', `  ${tag} fetching block 1: ${row.block_cid.slice(0, 20)}...`)
       const block = await fetchBlock(row.block_cid)
       blocks.push(block)
       repairBytes += block.bytes.length
