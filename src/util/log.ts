@@ -6,6 +6,15 @@ function ts(): string {
 
 export type LogLevel = 'INFO' | 'DONE' | 'ERROR' | 'RETRY' | 'REPAIR' | 'DOWNLOADING' | 'VERIFY'
 
+type LogListener = (line: string) => void
+let listener: LogListener | undefined
+
+export function onLog(fn: LogListener): void {
+  listener = fn
+}
+
 export function log(level: LogLevel, msg: string): void {
-  console.log(`${ts()} [${pid}] ${level} ${msg}`)
+  const line = `${ts()} [${pid}] ${level} ${msg}`
+  console.log(line)
+  listener?.(line)
 }

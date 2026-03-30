@@ -11,7 +11,7 @@ import { createBackend } from './backends/registry.js'
 import { startDashboard } from './dashboard/server.js'
 import { generateDashboardHtml } from './dashboard/html.js'
 import type { DashboardState } from './dashboard/html.js'
-import { log } from './util/log.js'
+import { log, onLog } from './util/log.js'
 import fs from 'node:fs'
 import type { ExportBackend } from './backends/interface.js'
 
@@ -92,9 +92,29 @@ async function _main(argv: string[]) {
     }
   }
 
-  const onProgress = (info: { type: string; [key: string]: any }) => {
-    addLogLine(`${new Date().toISOString().replace('T', ' ').slice(0, 19)} ${JSON.stringify(info)}`)
+  function formatProgress(info: { type: string; [key: string]: any }): string {
+    const ts = new Date().toISOString().replace('T', ' ').slice(0, 19)
+    const cid = info.rootCid ? info.rootCid.slice(0, 24) + '...' : ''
+    switch (info.type) {
+      case 'done': return `${ts} DONE ${cid} ${filesize(info.bytes || 0)}`
+      case 'error': return `${ts} ERROR ${cid} ${info.error || 'unknown'}`
+      case 'retry': return `${ts} RETRY ${cid} attempt ${info.attempt} (${info.error})`
+      case 'repairing': return `${ts} REPAIR ${cid} fetching missing blocks`
+      case 'repair-progress': return `${ts} REPAIR ${cid} ${info.fetched}/${info.total} blocks`
+      case 'verifying': return `${ts} VERIFY ${info.spaceName || ''} ${cid}`
+      case 'verified': return `${ts} VERIFY OK ${cid}`
+      case 'verify-failed': return `${ts} VERIFY FAIL ${cid} ${info.error || ''}`
+      case 'export-complete': return `${ts} INFO Export phase complete`
+      default: return `${ts} ${info.type} ${cid}`
+    }
   }
+
+  const onProgress = (info: { type: string; [key: string]: any }) => {
+    addLogLine(formatProgress(info))
+  }
+
+  // Capture log() output into dashboard too
+  onLog((line) => addLogLine(line))
 
   // --- Start dashboard ASAP ---
   if (opts.serve) {
