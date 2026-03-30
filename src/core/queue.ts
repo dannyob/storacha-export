@@ -31,6 +31,7 @@ export class UploadQueue {
   private _getPending: Database.Statement
   private _resetForRetry: Database.Statement
   private _getStats: Database.Statement
+  private _getComplete: Database.Statement
   private _addBatch: Database.Transaction
 
   constructor(private db: Database.Database) {
@@ -77,6 +78,8 @@ export class UploadQueue {
       FROM uploads
     `)
 
+    this._getComplete = db.prepare(`SELECT * FROM uploads WHERE backend = @backend AND status = 'complete'`)
+
     this._addBatch = db.transaction((uploads: UploadInput[]) => {
       for (const u of uploads) this._add.run(u)
     })
@@ -108,6 +111,10 @@ export class UploadQueue {
 
   markError(rootCid: string, backend: string, errorMsg: string): void {
     this._markError.run({ rootCid, backend, errorMsg })
+  }
+
+  getComplete(backend: string): UploadRow[] {
+    return this._getComplete.all({ backend }) as UploadRow[]
   }
 
   getPending(backend: string): UploadRow[] {
