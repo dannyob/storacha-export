@@ -29,11 +29,11 @@ export class GatewayFetcher {
   }
 
   /**
-   * Fetch a single raw block by CID.
-   * Returns the block with verified CID, or throws.
+   * Fetch a single block by CID.
+   * Returns the block with verified hash, or throws.
    */
   async fetchBlock(cidStr: string): Promise<Block> {
-    const url = `https://${cidStr}.ipfs.w3s.link/?format=raw`
+    const url = `${this.gatewayUrl.replace(/\/$/, '')}/ipfs/${cidStr}?format=raw`
     const res = await fetch(url, { dispatcher: fetchDispatcher } as any)
 
     if (!res.ok) {
@@ -41,14 +41,14 @@ export class GatewayFetcher {
     }
 
     const bytes = new Uint8Array(await res.arrayBuffer())
+    const expectedCid = CID.parse(cidStr)
     const hash = await sha256.digest(bytes)
-    const cid = CID.create(1, 0x55, hash)
 
-    if (cid.toString() !== cidStr) {
-      throw new Error(`CID mismatch: expected ${cidStr}, got ${cid.toString()}`)
+    if (!expectedCid.multihash.bytes.every((b, i) => b === hash.bytes[i])) {
+      throw new Error(`Hash mismatch for ${cidStr}`)
     }
 
-    return { cid, bytes }
+    return { cid: expectedCid, bytes }
   }
 
   /**
