@@ -39,7 +39,7 @@ export async function exportUpload(options: ExportUploadOptions): Promise<void> 
   if (existingProgress.total > 0 && existingProgress.missing > 0 && manifest.isRepairable(rootCid)) {
     log('INFO', `${tag} Resuming repair: ${existingProgress.seen}/${existingProgress.total} blocks, ${existingProgress.missing} missing`)
     queue.setStatus(rootCid, backend.name, 'repairing')
-    onProgress?.({ type: 'repairing', rootCid })
+    onProgress?.({ type: 'repairing', rootCid, totalBlocks: existingProgress.missing })
 
     const result = await repairUpload(
       rootCid,
@@ -92,13 +92,15 @@ export async function exportUpload(options: ExportUploadOptions): Promise<void> 
       // Stream raw CAR bytes through a counting passthrough — no block parsing in the hot path
       const nodeStream = Readable.fromWeb(res.body! as any)
       let byteCount = 0
+      let trackedBlocks = 0
+      let trackedTotal: number | undefined
       let lastProgressTime = Date.now()
       const countingStream = new PassThrough({
         transform(chunk, _encoding, callback) {
           byteCount += chunk.length
           const now = Date.now()
           if (now - lastProgressTime > 3000) {
-            onProgress?.({ type: 'progress', rootCid, bytes: byteCount, blocks: 0 })
+            onProgress?.({ type: 'progress', rootCid, bytes: byteCount, blocks: trackedBlocks, totalBlocks: trackedTotal })
             lastProgressTime = now
           }
           callback(null, chunk)
@@ -122,7 +124,6 @@ export async function exportUpload(options: ExportUploadOptions): Promise<void> 
       const trackingPromise = (async () => {
         try {
           const iterator = await CarBlockIterator.fromIterable(trackingStream)
-          let blockCount = 0
           for await (const { cid, bytes } of iterator) {
             const cidStr = cid.toString()
             manifest.markSeen(rootCid, cidStr, cid.code)
@@ -134,10 +135,9 @@ export async function exportUpload(options: ExportUploadOptions): Promise<void> 
                 }
               } catch {}
             }
-            blockCount++
-            if (blockCount % 100 === 0) {
-              const progress = manifest.getProgress(rootCid)
-              onProgress?.({ type: 'progress', rootCid, bytes: byteCount, blocks: blockCount, totalBlocks: progress.total || undefined })
+            trackedBlocks++
+            if (trackedBlocks % 100 === 0) {
+              trackedTotal = manifest.getProgress(rootCid).total || undefined
             }
           }
         } catch {
@@ -185,7 +185,7 @@ export async function exportUpload(options: ExportUploadOptions): Promise<void> 
   // Attempt inline repair
   if (progress.total > 0 && manifest.isRepairable(rootCid)) {
     queue.setStatus(rootCid, backend.name, 'repairing')
-    onProgress?.({ type: 'repairing', rootCid })
+    onProgress?.({ type: 'repairing', rootCid, totalBlocks: progress.missing })
 
     const result = await repairUpload(
       rootCid,

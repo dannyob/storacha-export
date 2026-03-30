@@ -139,7 +139,7 @@ async function _main(argv: string[]) {
             if (entry) { entry.bytes = info.bytes; entry.blocks = info.blocks; if (info.totalBlocks) entry.totalBlocks = info.totalBlocks } }
           break
         case 'repairing':
-          activeJobInfo.set(cid, { spaceName: info.spaceName || '', bytes: 0, blocks: 0, startedAt: Date.now(), mode: 'repair' })
+          activeJobInfo.set(cid, { spaceName: info.spaceName || '', bytes: 0, blocks: 0, totalBlocks: info.totalBlocks, startedAt: Date.now(), mode: 'repair' })
           break
         case 'repair-progress':
           { const entry = activeJobInfo.get(cid)
