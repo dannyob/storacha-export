@@ -1,5 +1,7 @@
 import { describe, it, expect } from 'vitest'
-import { carToBlockStream, blockStreamToArray } from '../../src/core/blocks.js'
+import { carToBlockStream, blockStreamToArray, trackBlocks } from '../../src/core/blocks.js'
+import { BlockManifest } from '../../src/core/manifest.js'
+import { createDatabase } from '../../src/core/db.js'
 import { CarWriter } from '@ipld/car'
 import * as dagPB from '@ipld/dag-pb'
 import { CID } from 'multiformats/cid'
@@ -67,5 +69,65 @@ describe('carToBlockStream', () => {
     // Should get at least the root and maybe leaf1, but not throw
     expect(blocks.length).toBeGreaterThan(0)
     expect(blocks.length).toBeLessThan(3)
+  })
+})
+
+describe('trackBlocks', () => {
+  it('records blocks and links in manifest as they pass through', async () => {
+    const db = createDatabase('/tmp/storacha-v2-track-test.db')
+    const manifest = new BlockManifest(db)
+
+    const leaf1 = await makeRawBlock('hello')
+    const leaf2 = await makeRawBlock('world')
+    const root = await makeDagPBNode([leaf1, leaf2])
+    const carBytes = await buildCarBytes([root, leaf1, leaf2], [root])
+
+    const source = carToBlockStream(carBytes)
+    const tracked = trackBlocks(source, root.cid.toString(), manifest)
+    const blocks = await blockStreamToArray(tracked)
+
+    // All blocks pass through
+    expect(blocks).toHaveLength(3)
+
+    // Manifest has all blocks as seen
+    expect(manifest.isSeen(root.cid.toString(), root.cid.toString())).toBe(true)
+    expect(manifest.isSeen(root.cid.toString(), leaf1.cid.toString())).toBe(true)
+    expect(manifest.isSeen(root.cid.toString(), leaf2.cid.toString())).toBe(true)
+
+    // Links were extracted from the dag-pb root
+    const progress = manifest.getProgress(root.cid.toString())
+    expect(progress.seen).toBe(3)
+    expect(progress.missing).toBe(0)
+
+    db.close()
+    try { fs.unlinkSync('/tmp/storacha-v2-track-test.db') } catch {}
+    try { fs.unlinkSync('/tmp/storacha-v2-track-test.db-wal') } catch {}
+    try { fs.unlinkSync('/tmp/storacha-v2-track-test.db-shm') } catch {}
+  })
+
+  it('handles truncated CARs — records what it can', async () => {
+    const db = createDatabase('/tmp/storacha-v2-track-trunc-test.db')
+    const manifest = new BlockManifest(db)
+
+    const leaf1 = await makeRawBlock('hello')
+    const leaf2 = await makeRawBlock('world')
+    const root = await makeDagPBNode([leaf1, leaf2])
+    const carBytes = await buildCarBytes([root, leaf1, leaf2], [root])
+    const truncated = carBytes.slice(0, Math.floor(carBytes.length * 0.8))
+
+    const source = carToBlockStream(truncated)
+    const tracked = trackBlocks(source, root.cid.toString(), manifest)
+    await blockStreamToArray(tracked)
+
+    // Root's dag-pb links should be recorded even if leaves are missing
+    const progress = manifest.getProgress(root.cid.toString())
+    expect(progress.seen).toBeGreaterThan(0)
+    // At least the root was seen + its links were discovered
+    expect(progress.total).toBeGreaterThanOrEqual(progress.seen)
+
+    db.close()
+    try { fs.unlinkSync('/tmp/storacha-v2-track-trunc-test.db') } catch {}
+    try { fs.unlinkSync('/tmp/storacha-v2-track-trunc-test.db-wal') } catch {}
+    try { fs.unlinkSync('/tmp/storacha-v2-track-trunc-test.db-shm') } catch {}
   })
 })
