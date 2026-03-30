@@ -7,8 +7,8 @@ export interface ExportBackend {
   init?(): Promise<void>
   close?(): Promise<void>
 
-  /** Import a stream of blocks (happy path — from a CAR) */
-  importCar(rootCid: string, blocks: BlockStream): Promise<void>
+  /** Import CAR data — accepts raw CAR byte stream or a BlockStream */
+  importCar(rootCid: string, stream: BlockStream | AsyncIterable<Uint8Array> | NodeJS.ReadableStream): Promise<void>
 
   /** Check if a root CID is fully stored (pinned) */
   hasContent(rootCid: string): Promise<boolean>
