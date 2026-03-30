@@ -1,5 +1,3 @@
-import { CarWriter } from '@ipld/car'
-import { CID } from 'multiformats/cid'
 import type { ExportBackend } from './interface.js'
 import type { BlockStream } from '../core/blocks.js'
 
@@ -16,16 +14,12 @@ export class ClusterBackend implements ExportBackend {
     if (!res.ok) throw new Error(`Cannot connect to IPFS Cluster at ${this.apiUrl}: ${res.status}`)
   }
 
-  async importCar(rootCid: string, blocks: BlockStream): Promise<void> {
-    const rootCidObj = CID.parse(rootCid)
-    const { writer, out } = CarWriter.create([rootCidObj])
-
+  async importCar(rootCid: string, stream: BlockStream | AsyncIterable<Uint8Array> | NodeJS.ReadableStream): Promise<void> {
+    // Collect raw bytes — cluster API doesn't support streaming upload
     const chunks: Uint8Array[] = []
-    const drain = (async () => { for await (const chunk of out) chunks.push(chunk) })()
-
-    for await (const block of blocks) await writer.put(block)
-    await writer.close()
-    await drain
+    for await (const chunk of stream as AsyncIterable<Uint8Array>) {
+      chunks.push(chunk)
+    }
 
     const carBlob = new Blob(chunks as unknown as BlobPart[], { type: 'application/vnd.ipld.car' })
     const form = new FormData()
