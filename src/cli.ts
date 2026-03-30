@@ -63,6 +63,7 @@ async function _main(argv: string[]) {
   const spaceSizes = new Map<string, number>()
   let queue: UploadQueue | undefined
   let selectedSpaceNames: string[] = []
+  const sessionStart = new Date().toISOString().replace('T', ' ').slice(0, 19)
   const activeJobInfo = new Map<string, { spaceName: string; bytes: number; blocks: number; totalBlocks?: number; startedAt: number; mode: 'car' | 'repair' }>()
 
   function addLogLine(msg: string) {
@@ -100,8 +101,8 @@ async function _main(argv: string[]) {
       bySpace: queue && selectedSpaceNames.length > 0 ? queue.getStatsBySpace(selectedSpaceNames) : [],
       spaceSizes,
       activeJobs,
-      recentDone: queue ? queue.getRecentDone() : [],
-      recentErrors: queue ? queue.getRecentErrors() : [],
+      recentDone: queue ? queue.getRecentDone(sessionStart) : [],
+      recentErrors: queue ? queue.getRecentErrors(sessionStart) : [],
       logLines,
       statusMessage,
     }

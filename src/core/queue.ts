@@ -88,11 +88,11 @@ export class UploadQueue {
     )
 
     this._getRecentDone = db.prepare(
-      "SELECT space_name, root_cid FROM uploads WHERE status = 'complete' ORDER BY updated_at DESC LIMIT ?"
+      "SELECT space_name, root_cid FROM uploads WHERE status = 'complete' AND updated_at >= @since ORDER BY updated_at DESC LIMIT @limit"
     )
 
     this._getRecentErrors = db.prepare(
-      "SELECT space_name, root_cid, error_msg FROM uploads WHERE status = 'error' ORDER BY updated_at DESC LIMIT ?"
+      "SELECT space_name, root_cid, error_msg FROM uploads WHERE status = 'error' AND updated_at >= @since ORDER BY updated_at DESC LIMIT @limit"
     )
 
     this._addBatch = db.transaction((uploads: UploadInput[]) => {
@@ -177,11 +177,11 @@ export class UploadQueue {
     return this._getActiveJobs.all(limit) as any[]
   }
 
-  getRecentDone(limit = 5): Array<{ space_name: string; root_cid: string }> {
-    return this._getRecentDone.all(limit) as any[]
+  getRecentDone(since: string, limit = 5): Array<{ space_name: string; root_cid: string }> {
+    return this._getRecentDone.all({ since, limit }) as any[]
   }
 
-  getRecentErrors(limit = 10): Array<{ space_name: string; root_cid: string; error_msg: string | null }> {
-    return this._getRecentErrors.all(limit) as any[]
+  getRecentErrors(since: string, limit = 10): Array<{ space_name: string; root_cid: string; error_msg: string | null }> {
+    return this._getRecentErrors.all({ since, limit }) as any[]
   }
 }
