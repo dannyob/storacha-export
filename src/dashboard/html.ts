@@ -42,6 +42,9 @@ export function generateDashboardHtml(state: DashboardState, options?: { staticF
   const complete = stats.complete ?? 0
   const errors = stats.error ?? 0
   const pending = stats.pending ?? 0
+  const downloading = stats.downloading ?? 0
+  const repairing = stats.repairing ?? 0
+  const active = downloading + repairing
   const totalBytes = bySpace.reduce((s, r) => s + (r.bytes || 0), 0)
   let grandTotalBytes = 0
   for (const v of spaceSizes.values()) grandTotalBytes += v
@@ -129,7 +132,7 @@ ${options?.staticFile ? '<meta http-equiv="refresh" content="5">' : ''}
     --ff-blue-5: #154ED9; --ff-blue-7: #06094E; --ff-blue-8: #080B2E;
     --ff-bg: #0B0E3F; --ff-card: #ffffff; --ff-text: #1a1a2e;
     --ff-text-light: #4a5568; --ff-border: #e2e8f0;
-    --green: #22c55e; --red: #ef4444; --yellow: #eab308; --orange: #f97316;
+    --green: #22c55e; --red: #ef4444; --yellow: #eab308; --orange: #f97316; --purple: #a78bfa;
   }
   *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
   body { font-family: 'Archivo', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #f7f8fc; color: var(--ff-text); }
@@ -198,6 +201,8 @@ ${options?.staticFile ? '<meta http-equiv="refresh" content="5">' : ''}
   <div class="kpi-grid">
     <div class="kpi-card blue"><div class="label">Total Uploads</div><div class="value">${total.toLocaleString()}</div></div>
     <div class="kpi-card green"><div class="label">Complete</div><div class="value">${complete.toLocaleString()}</div><div class="sub">${pctDone}%</div></div>
+    ${downloading > 0 ? `<div class="kpi-card blue"><div class="label">Downloading</div><div class="value">${downloading}</div></div>` : ''}
+    ${repairing > 0 ? `<div class="kpi-card" style="border-color:var(--purple)"><div class="label">Repairing</div><div class="value" style="color:var(--purple)">${repairing}</div></div>` : ''}
     <div class="kpi-card ${errors > 0 ? 'red' : ''}"><div class="label">Errors</div><div class="value">${errors}</div></div>
     <div class="kpi-card orange"><div class="label">Pending</div><div class="value">${pending.toLocaleString()}</div></div>
     <div class="kpi-card blue"><div class="label">Transferred</div><div class="value">${filesize(totalBytes)}</div>${grandTotalBytes > 0 ? `<div class="sub">(${filesize(grandTotalBytes)} total)</div>` : ''}</div>
