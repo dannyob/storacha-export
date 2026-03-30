@@ -94,18 +94,21 @@ async function _main(argv: string[]) {
 
   function formatProgress(info: { type: string; [key: string]: any }): string {
     const ts = new Date().toISOString().replace('T', ' ').slice(0, 19)
+    const space = info.spaceName ? `[${info.spaceName}]` : ''
     const cid = info.rootCid ? info.rootCid.slice(0, 24) + '...' : ''
+    const tag = [space, cid].filter(Boolean).join(' ')
     switch (info.type) {
-      case 'done': return `${ts} DONE ${cid} ${filesize(info.bytes || 0)}`
-      case 'error': return `${ts} ERROR ${cid} ${info.error || 'unknown'}`
-      case 'retry': return `${ts} RETRY ${cid} attempt ${info.attempt} (${info.error})`
-      case 'repairing': return `${ts} REPAIR ${cid} fetching missing blocks`
-      case 'repair-progress': return `${ts} REPAIR ${cid} ${info.fetched}/${info.total} blocks`
-      case 'verifying': return `${ts} VERIFY ${info.spaceName || ''} ${cid}`
-      case 'verified': return `${ts} VERIFY OK ${cid}`
-      case 'verify-failed': return `${ts} VERIFY FAIL ${cid} ${info.error || ''}`
+      case 'downloading': return `${ts} DOWNLOADING ${tag}`
+      case 'done': return `${ts} DONE ${tag} ${filesize(info.bytes || 0)}`
+      case 'error': return `${ts} ERROR ${tag} ${info.error || 'unknown'}`
+      case 'retry': return `${ts} RETRY ${tag} attempt ${info.attempt} (${info.error})`
+      case 'repairing': return `${ts} REPAIR ${tag} fetching missing blocks`
+      case 'repair-progress': return `${ts} REPAIR ${tag} ${info.fetched}/${info.total} blocks`
+      case 'verifying': return `${ts} VERIFY ${tag}`
+      case 'verified': return `${ts} VERIFY OK ${tag}`
+      case 'verify-failed': return `${ts} VERIFY FAIL ${tag} ${info.error || ''}`
       case 'export-complete': return `${ts} INFO Export phase complete`
-      default: return `${ts} ${info.type} ${cid}`
+      default: return `${ts} ${info.type} ${tag}`
     }
   }
 
