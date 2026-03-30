@@ -63,13 +63,68 @@ async function _main(argv: string[]) {
   const opts = program.opts()
   const needsWizard = !opts.backend || opts.backend.length === 0
 
+  // --- Dashboard state (shared across all phases) ---
+  let phase: DashboardState['phase'] = 'discovery'
+  let statusMessage = 'Starting up...'
+  const logLines: string[] = []
+  const spaceSizes = new Map<string, number>()
+  let queue: UploadQueue | undefined
+  let htmlOutInterval: ReturnType<typeof setInterval> | undefined
+
+  function addLogLine(msg: string) {
+    logLines.push(msg)
+    if (logLines.length > 50) logLines.shift()
+  }
+
+  function buildDashboardState(): DashboardState {
+    const emptyStats = { total: 0, complete: 0, error: 0, pending: 0, downloading: 0, partial: 0, repairing: 0, total_bytes: 0 }
+    return {
+      phase,
+      pid: process.pid,
+      stats: queue ? queue.getStats() : emptyStats,
+      bySpace: [],
+      spaceSizes,
+      activeJobs: [],
+      recentDone: [],
+      recentErrors: [],
+      logLines: [...logLines],
+      statusMessage,
+    }
+  }
+
+  const onProgress = (info: { type: string; [key: string]: any }) => {
+    addLogLine(`${new Date().toISOString().replace('T', ' ').slice(0, 19)} ${JSON.stringify(info)}`)
+  }
+
+  // --- Start dashboard ASAP ---
+  if (opts.serve) {
+    const [host, portStr] = (typeof opts.serve === 'string' ? opts.serve : '127.0.0.1:9000').split(':')
+    const port = portStr ? parseInt(portStr, 10) : 9000
+    const { url } = await startDashboard({
+      host,
+      port,
+      password: opts.servePassword,
+      getHtml: () => generateDashboardHtml(buildDashboardState()),
+    })
+    log('INFO', `Dashboard: ${url}`)
+  }
+
+  if (opts.htmlOut) {
+    htmlOutInterval = setInterval(() => {
+      fs.writeFileSync(opts.htmlOut, generateDashboardHtml(buildDashboardState()))
+    }, 5000)
+  }
+
   // --- Auth ---
+  statusMessage = 'Checking credentials...'
   log('INFO', 'Checking for Storacha credentials...')
   const creds = await detectCredentials()
 
   let client: any
   if (creds.hasCredentials) {
     log('INFO', `Found credentials for ${creds.accounts.join(', ')} with ${creds.spaces.length} spaces`)
+    addLogLine(`Found credentials: ${creds.accounts.join(', ')} (${creds.spaces.length} spaces)`)
+    statusMessage = `Authenticated as ${creds.accounts.join(', ')}`
     if (needsWizard) {
       const useThem = await confirm({ message: 'Use these credentials?', default: true })
       if (!useThem) {
@@ -83,6 +138,7 @@ async function _main(argv: string[]) {
     }
   } else {
     log('INFO', 'No credentials found')
+    statusMessage = 'No credentials found — waiting for login'
     const email = await input({ message: 'Email to log in with:' })
     client = await login(email)
   }
@@ -113,7 +169,10 @@ async function _main(argv: string[]) {
     selectedSpaces = allSpaces
   }
 
-  console.log(`\nExporting ${selectedSpaces.length} space(s): ${selectedSpaces.map((s) => s.name).join(', ')}`)
+  const spaceList = selectedSpaces.map((s) => s.name).join(', ')
+  console.log(`\nExporting ${selectedSpaces.length} space(s): ${spaceList}`)
+  statusMessage = `Selected ${selectedSpaces.length} space(s): ${spaceList}`
+  addLogLine(`Selected spaces: ${spaceList}`)
 
   // --- Backend selection ---
   let backends: ExportBackend[]
@@ -135,6 +194,7 @@ async function _main(argv: string[]) {
       try {
         await backend.init()
         log('INFO', `Backend ${backend.name}: connected`)
+        addLogLine(`Backend ${backend.name}: connected`)
       } catch (err: any) {
         log('ERROR', `Backend ${backend.name} init failed: ${err.message}`)
         process.exit(1)
@@ -158,7 +218,7 @@ async function _main(argv: string[]) {
   if (opts.fresh && dbExists) fs.unlinkSync(dbPath)
 
   const db = createDatabase(dbPath)
-  const queue = new UploadQueue(db)
+  queue = new UploadQueue(db)
   const manifest = new BlockManifest(db)
 
   if (dbExists && !opts.fresh) {
@@ -166,64 +226,30 @@ async function _main(argv: string[]) {
     if (reset > 0) log('INFO', `Reset ${reset} stuck/failed job(s) for retry`)
     const stats = queue.getStats()
     log('INFO', `Resuming: ${stats.complete} done, ${stats.pending} pending`)
-  }
-
-  // --- Dashboard setup ---
-  let phase: DashboardState['phase'] = 'discovery'
-  const logLines: string[] = []
-  let htmlOutInterval: ReturnType<typeof setInterval> | undefined
-
-  const spaceSizes = new Map<string, number>()
-
-  function buildDashboardState(): DashboardState {
-    const stats = queue.getStats()
-    return {
-      phase,
-      pid: process.pid,
-      stats,
-      bySpace: [],
-      spaceSizes,
-      activeJobs: [],
-      recentDone: [],
-      recentErrors: [],
-      logLines: [...logLines],
-    }
-  }
-
-  if (opts.serve) {
-    const [host, portStr] = (typeof opts.serve === 'string' ? opts.serve : '127.0.0.1:9000').split(':')
-    const port = portStr ? parseInt(portStr, 10) : 9000
-    const { url } = await startDashboard({
-      host,
-      port,
-      password: opts.servePassword,
-      getHtml: () => generateDashboardHtml(buildDashboardState()),
-    })
-    log('INFO', `Dashboard: ${url}`)
-  }
-
-  if (opts.htmlOut) {
-    htmlOutInterval = setInterval(() => {
-      fs.writeFileSync(opts.htmlOut, generateDashboardHtml(buildDashboardState()))
-    }, 5000)
-  }
-
-  const onProgress = (info: { type: string; [key: string]: any }) => {
-    logLines.push(`${new Date().toISOString()} ${JSON.stringify(info)}`)
-    if (logLines.length > 50) logLines.shift()
+    addLogLine(`Resuming: ${stats.complete} done, ${stats.pending} pending`)
   }
 
   // --- Collect sizes + enumerate ---
-  phase = 'discovery'
+  statusMessage = 'Collecting space sizes...'
+  addLogLine('Querying space sizes...')
   const sizes = await collectSpaceSizes(client, selectedSpaces, db)
   for (const [did, bytes] of sizes) {
     const space = selectedSpaces.find(s => s.did === did)
-    if (space) spaceSizes.set(space.name, bytes)
+    if (space) {
+      spaceSizes.set(space.name, bytes)
+      addLogLine(`  ${space.name}: ${filesize(bytes)}`)
+    }
   }
 
   // Enumerate and queue
+  let enumCount = 0
   const batch: any[] = []
+  statusMessage = 'Enumerating uploads...'
   for await (const upload of enumerateUploads(client, selectedSpaces)) {
+    enumCount++
+    if (enumCount % 100 === 0) {
+      statusMessage = `Enumerating uploads... ${enumCount} found`
+    }
     for (const be of backends) {
       batch.push({
         rootCid: upload.rootCid,
@@ -235,10 +261,13 @@ async function _main(argv: string[]) {
     if (batch.length >= 500) { queue.addBatch(batch); batch.length = 0 }
   }
   if (batch.length > 0) queue.addBatch(batch)
+  statusMessage = `Enumerated ${enumCount} uploads`
+  addLogLine(`Enumeration complete: ${enumCount} uploads queued`)
 
   // --- Verify only? ---
   if (opts.verify) {
     phase = 'verify'
+    statusMessage = 'Running verification...'
     const result = await runVerify({ queue, backends, onProgress })
     log('INFO', `Verified: ${result.verified}, Failed: ${result.failed}`)
     db.close()
@@ -248,6 +277,7 @@ async function _main(argv: string[]) {
 
   // --- Export phase ---
   phase = 'export'
+  statusMessage = 'Exporting...'
   await runExport({
     queue,
     manifest,
@@ -260,12 +290,18 @@ async function _main(argv: string[]) {
 
   // --- Verify phase ---
   phase = 'verify'
+  statusMessage = 'Running verification...'
   log('INFO', 'Running verification...')
   const verifyResult = await runVerify({ queue, backends, onProgress })
   log('INFO', `Verified: ${verifyResult.verified}, Failed: ${verifyResult.failed}`)
 
   // --- Cleanup ---
+  statusMessage = 'Done'
   if (htmlOutInterval) clearInterval(htmlOutInterval)
+  // Write final dashboard state
+  if (opts.htmlOut) {
+    fs.writeFileSync(opts.htmlOut, generateDashboardHtml(buildDashboardState()))
+  }
   for (const backend of backends) {
     if (backend.close) await backend.close()
   }

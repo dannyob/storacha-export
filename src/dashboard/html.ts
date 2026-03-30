@@ -25,6 +25,7 @@ export interface DashboardState {
   recentDone: Array<{ space_name: string; root_cid: string }>
   recentErrors: Array<{ space_name: string; root_cid: string; error_msg: string | null }>
   logLines: string[]
+  statusMessage?: string
 }
 
 function filesize(bytes: number): string {
@@ -175,6 +176,7 @@ export function generateDashboardHtml(state: DashboardState): string {
   <h1>storacha-export</h1>
   <p>PID: ${pid} &middot; Updated ${now} UTC</p>
   <div class="phase-badge">${label}</div>
+  ${state.statusMessage ? `<p style="margin-top:0.5rem;color:var(--ff-blue-2);font-size:0.9rem">${state.statusMessage.replace(/&/g, '&amp;').replace(/</g, '&lt;')}</p>` : ''}
 </header>
 <div class="container">
   <div class="kpi-grid">
