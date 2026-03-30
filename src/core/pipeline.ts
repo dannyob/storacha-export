@@ -44,7 +44,7 @@ export async function exportUpload(options: ExportUploadOptions): Promise<void> 
   }
 
   const existingProgress = manifest.getProgress(rootCid)
-  if (existingProgress.total > 0 && existingProgress.missing > 0 && manifest.isRepairable(rootCid)) {
+  if (existingProgress.total > 0 && existingProgress.missing > 0) {
     log('INFO', `${tag} Resuming repair: ${existingProgress.seen}/${existingProgress.total} blocks, ${existingProgress.missing} missing`)
     queue.setStatus(rootCid, backend.name, 'repairing')
     onProgress?.({ type: 'repairing', rootCid, totalBlocks: existingProgress.missing })
@@ -55,15 +55,11 @@ export async function exportUpload(options: ExportUploadOptions): Promise<void> 
       (cidStr) => fetcher.fetchBlock(cidStr),
       {
         onProgress: (fetched, total, bytes) => onProgress?.({ type: 'repair-progress', rootCid, fetched, total, bytes }),
+        onBlock: async (block) => { if (backend.putBlock) await backend.putBlock(block.cid.toString(), block.bytes) },
       },
     )
 
     if (result && result.complete) {
-      for (const block of result.blocks) {
-        if (backend.putBlock) {
-          await backend.putBlock(block.cid.toString(), block.bytes)
-        }
-      }
       if (await backend.hasContent(rootCid)) {
         queue.markComplete(rootCid, backend.name, 0)
         onProgress?.({ type: 'done', rootCid, bytes: 0 })
@@ -224,18 +220,11 @@ export async function exportUpload(options: ExportUploadOptions): Promise<void> 
       (cidStr) => fetcher.fetchBlock(cidStr),
       {
         onProgress: (fetched, total, bytes) => onProgress?.({ type: 'repair-progress', rootCid, fetched, total, bytes }),
+        onBlock: async (block) => { if (backend.putBlock) await backend.putBlock(block.cid.toString(), block.bytes) },
       },
     )
 
     if (result && result.complete) {
-      // Push repaired blocks to backend
-      for (const block of result.blocks) {
-        if (backend.putBlock) {
-          await backend.putBlock(block.cid.toString(), block.bytes)
-        }
-      }
-
-      // Verify
       if (await backend.hasContent(rootCid)) {
         queue.markComplete(rootCid, backend.name, 0)
         onProgress?.({ type: 'done', rootCid, bytes: 0 })

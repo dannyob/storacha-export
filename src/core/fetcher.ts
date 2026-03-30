@@ -45,6 +45,7 @@ export class GatewayFetcher {
     for (let attempt = 0; attempt < 3; attempt++) {
       const controller = new AbortController()
 
+      let timer: ReturnType<typeof setTimeout> | undefined
       try {
         const block = await Promise.race([
           (async (): Promise<Block> => {
@@ -72,13 +73,15 @@ export class GatewayFetcher {
 
             return { cid: expectedCid, bytes }
           })(),
-          new Promise<never>((_, reject) =>
-            setTimeout(() => { controller.abort(); reject(new Error('Block fetch timeout (30s)')) }, 30000)
-          ),
+          new Promise<never>((_, reject) => {
+            timer = setTimeout(() => { controller.abort(); reject(new Error('Block fetch timeout (30s)')) }, 30000)
+          }),
         ])
         return block
       } catch (err: any) {
         if (attempt === 2 || !err.message.includes('retrying')) throw err
+      } finally {
+        if (timer) clearTimeout(timer)
       }
     }
     throw new Error('Block fetch failed after retries')
