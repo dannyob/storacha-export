@@ -27,7 +27,7 @@ export class ClusterBackend implements ExportBackend {
     await writer.close()
     await drain
 
-    const carBlob = new Blob(chunks, { type: 'application/vnd.ipld.car' })
+    const carBlob = new Blob(chunks as unknown as BlobPart[], { type: 'application/vnd.ipld.car' })
     const form = new FormData()
     form.append('file', carBlob, `${rootCid}.car`)
 
