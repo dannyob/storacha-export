@@ -12,8 +12,8 @@ export interface RepairResult {
 }
 
 export interface RepairOptions {
-  hasBlock?: (cid: string) => Promise<boolean>
   onProgress?: (fetched: number, total: number, bytes: number) => void
+  throttleMs?: number
 }
 
 /**
@@ -28,7 +28,7 @@ export async function repairUpload(
   fetchBlock: (cidStr: string) => Promise<Block>,
   options: RepairOptions = {},
 ): Promise<RepairResult | null> {
-  const { hasBlock, onProgress } = options
+  const { onProgress, throttleMs = 1000 } = options
   const tag = rootCid.slice(0, 24) + '...'
 
   let missing = manifest.getMissing(rootCid)
@@ -77,8 +77,7 @@ export async function repairUpload(
         log('REPAIR', `  FAIL ${row.block_cid.slice(0, 24)}...: ${err.message}`)
         failed++
       }
-      // Throttle to ~1 req/s to avoid 429s from the gateway
-      await new Promise(r => setTimeout(r, 1000))
+      if (throttleMs > 0) await new Promise(r => setTimeout(r, throttleMs))
     }
 
     // Check if decoding dag-pb blocks revealed more missing blocks
