@@ -35,21 +35,28 @@ export class GatewayFetcher {
    */
   async fetchBlock(cidStr: string): Promise<Block> {
     const url = `${this.gatewayUrl.replace(/\/$/, '')}/ipfs/${cidStr}?format=raw`
-    const res = await fetch(url, { dispatcher: fetchDispatcher } as any)
+    const controller = new AbortController()
+    const timeout = setTimeout(() => controller.abort(), 30000)
 
-    if (!res.ok) {
-      throw new Error(`Block fetch failed: HTTP ${res.status}`)
+    try {
+      const res = await fetch(url, { dispatcher: fetchDispatcher, signal: controller.signal } as any)
+
+      if (!res.ok) {
+        throw new Error(`Block fetch failed: HTTP ${res.status}`)
+      }
+
+      const bytes = new Uint8Array(await res.arrayBuffer())
+      const expectedCid = CID.parse(cidStr)
+      const hash = await sha256.digest(bytes)
+
+      if (!expectedCid.multihash.bytes.every((b, i) => b === hash.bytes[i])) {
+        throw new Error(`Hash mismatch for ${cidStr}`)
+      }
+
+      return { cid: expectedCid, bytes }
+    } finally {
+      clearTimeout(timeout)
     }
-
-    const bytes = new Uint8Array(await res.arrayBuffer())
-    const expectedCid = CID.parse(cidStr)
-    const hash = await sha256.digest(bytes)
-
-    if (!expectedCid.multihash.bytes.every((b, i) => b === hash.bytes[i])) {
-      throw new Error(`Hash mismatch for ${cidStr}`)
-    }
-
-    return { cid: expectedCid, bytes }
   }
 
   /**
