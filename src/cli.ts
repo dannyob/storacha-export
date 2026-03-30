@@ -12,16 +12,9 @@ import { startDashboard } from './dashboard/server.js'
 import { generateDashboardHtml } from './dashboard/html.js'
 import type { DashboardState } from './dashboard/html.js'
 import { log, onLog } from './util/log.js'
+import { filesize } from './util/format.js'
 import fs from 'node:fs'
 import type { ExportBackend } from './backends/interface.js'
-
-function filesize(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`
-  if (bytes < 1024 ** 2) return `${(bytes / 1024).toFixed(1)} KiB`
-  if (bytes < 1024 ** 3) return `${(bytes / 1024 ** 2).toFixed(1)} MiB`
-  if (bytes < 1024 ** 4) return `${(bytes / 1024 ** 3).toFixed(1)} GiB`
-  return `${(bytes / 1024 ** 4).toFixed(1)} TiB`
-}
 
 export async function main(argv: string[]) {
   try {
@@ -88,7 +81,7 @@ async function _main(argv: string[]) {
       activeJobs: queue ? queue.getActiveJobs() : [],
       recentDone: queue ? queue.getRecentDone() : [],
       recentErrors: queue ? queue.getRecentErrors() : [],
-      logLines: [...logLines],
+      logLines,
       statusMessage,
     }
   }
@@ -147,7 +140,6 @@ async function _main(argv: string[]) {
   let client: any
   if (creds.hasCredentials) {
     log('INFO', `Found credentials for ${creds.accounts.join(', ')} with ${creds.spaces.length} spaces`)
-    addLogLine(`Found credentials: ${creds.accounts.join(', ')} (${creds.spaces.length} spaces)`)
     statusMessage = `Authenticated as ${creds.accounts.join(', ')}`
     if (needsWizard) {
       const useThem = await confirm({ message: 'Use these credentials?', default: true })
@@ -251,7 +243,6 @@ async function _main(argv: string[]) {
     if (reset > 0) log('INFO', `Reset ${reset} stuck/failed job(s) for retry`)
     const stats = queue.getStats()
     log('INFO', `Resuming: ${stats.complete} done, ${stats.pending} pending`)
-    addLogLine(`Resuming: ${stats.complete} done, ${stats.pending} pending`)
   }
 
   // --- Collect sizes + enumerate ---

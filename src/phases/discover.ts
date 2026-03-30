@@ -2,6 +2,7 @@ import { detectCredentials, login } from '../auth.js'
 import type { UploadQueue } from '../core/queue.js'
 import type Database from 'better-sqlite3'
 import { log } from '../util/log.js'
+import { filesize } from '../util/format.js'
 
 export interface DiscoverResult {
   client: any
@@ -82,7 +83,7 @@ export async function collectSpaceSizes(
               total += (report as any)?.size?.final || 0
             }
             sizes.set(spaceDid, total)
-            log('INFO', `  ${space.name}: ${(total / 1024 / 1024).toFixed(1)} MiB`)
+            log('INFO', `  ${space.name}: ${filesize(total)}`)
 
             db.prepare(
               `INSERT INTO spaces (did, name, total_bytes, enumerated_at) VALUES (?, ?, ?, datetime('now'))
