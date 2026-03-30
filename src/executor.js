@@ -114,7 +114,8 @@ export async function executeJob(job, backends, queue, options = {}) {
       const repair = await repairTruncatedCar(
         job.root_cid,
         gatewayUrl || DEFAULT_GATEWAY,
-        onProgress
+        onProgress,
+        { spaceName: job.space_name }
       )
       if (repair) {
         // Import the repair CAR (missing blocks only)

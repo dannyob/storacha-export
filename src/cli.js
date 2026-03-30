@@ -442,7 +442,7 @@ async function _main(argv) {
         log('RETRY', `[${info.spaceName}] ${info.rootCid} attempt ${info.attempt}, waiting ${info.delay}ms: ${info.error}`)
         addLogLine('RETRY', `[${info.spaceName}] ${info.rootCid} attempt ${info.attempt}: ${info.error}`)
       } else if (info.type === 'repair') {
-        addLogLine('REPAIR', `[${info.rootCid?.slice(0, 24)}...] fetched ${info.fetched}/${info.total} blocks`)
+        addLogLine('REPAIR', `[${info.spaceName || '?'}] ${info.rootCid?.slice(0, 24)}... fetched ${info.fetched}/${info.total} blocks`)
       } else if (info.type === 'complete') {
         bar.stop()
       }
