@@ -195,7 +195,7 @@ export function generateDashboardHtml(state: DashboardState): string {
     <div class="kpi-card green"><div class="label">Complete</div><div class="value">${complete.toLocaleString()}</div><div class="sub">${pctDone}%</div></div>
     <div class="kpi-card ${errors > 0 ? 'red' : ''}"><div class="label">Errors</div><div class="value">${errors}</div></div>
     <div class="kpi-card orange"><div class="label">Pending</div><div class="value">${pending.toLocaleString()}</div></div>
-    <div class="kpi-card blue"><div class="label">Downloaded</div><div class="value">${filesize(totalBytes)}</div>${grandTotalBytes > 0 ? `<div class="sub">(${filesize(grandTotalBytes)} stored)</div>` : ''}</div>
+    <div class="kpi-card blue"><div class="label">Transferred</div><div class="value">${filesize(totalBytes)}</div>${grandTotalBytes > 0 ? `<div class="sub">(${filesize(grandTotalBytes)} total)</div>` : ''}</div>
   </div>
 
   <div class="overall-bar">
@@ -205,7 +205,7 @@ export function generateDashboardHtml(state: DashboardState): string {
 
   <h2>Per Space</h2>
   <table>
-    <thead><tr><th>Space</th><th style="text-align:right">Done</th><th style="text-align:right">Err</th><th style="text-align:right">Pending</th><th style="text-align:right">Total</th><th style="text-align:right">Downloaded (Stored)</th><th>Progress</th></tr></thead>
+    <thead><tr><th>Space</th><th style="text-align:right">Done</th><th style="text-align:right">Err</th><th style="text-align:right">Pending</th><th style="text-align:right">Total</th><th style="text-align:right">Transferred (Total)</th><th>Progress</th></tr></thead>
     <tbody>${spaceRows}</tbody>
   </table>
 
