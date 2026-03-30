@@ -63,7 +63,6 @@ async function _main(argv: string[]) {
   const spaceSizes = new Map<string, number>()
   let queue: UploadQueue | undefined
   let selectedSpaceNames: string[] = []
-  let htmlOutInterval: ReturnType<typeof setInterval> | undefined
 
   function addLogLine(msg: string) {
     logLines.push(msg)
@@ -114,6 +113,14 @@ async function _main(argv: string[]) {
   onLog((line) => addLogLine(line))
 
   // --- Start dashboard ASAP ---
+  // Pre-render HTML on a timer so HTTP requests serve instantly
+  let cachedHtml = generateDashboardHtml(buildDashboardState())
+  const refreshDashboard = () => {
+    cachedHtml = generateDashboardHtml(buildDashboardState())
+    if (opts.htmlOut) fs.writeFileSync(opts.htmlOut, cachedHtml)
+  }
+  const dashboardInterval = setInterval(refreshDashboard, 2000)
+
   if (opts.serve) {
     const [host, portStr] = (typeof opts.serve === 'string' ? opts.serve : '127.0.0.1:9000').split(':')
     const port = portStr ? parseInt(portStr, 10) : 9000
@@ -121,15 +128,9 @@ async function _main(argv: string[]) {
       host,
       port,
       password: opts.servePassword,
-      getHtml: () => generateDashboardHtml(buildDashboardState()),
+      getHtml: () => cachedHtml,
     })
     log('INFO', `Dashboard: ${url}`)
-  }
-
-  if (opts.htmlOut) {
-    htmlOutInterval = setInterval(() => {
-      fs.writeFileSync(opts.htmlOut, generateDashboardHtml(buildDashboardState()))
-    }, 5000)
   }
 
   // --- Auth ---
@@ -287,7 +288,7 @@ async function _main(argv: string[]) {
     const result = await runVerify({ queue, backends, onProgress })
     log('INFO', `Verified: ${result.verified}, Failed: ${result.failed}`)
     db.close()
-    if (htmlOutInterval) clearInterval(htmlOutInterval)
+    if (dashboardInterval) clearInterval(dashboardInterval)
     return
   }
 
@@ -313,7 +314,7 @@ async function _main(argv: string[]) {
 
   // --- Cleanup ---
   statusMessage = 'Done'
-  if (htmlOutInterval) clearInterval(htmlOutInterval)
+  if (dashboardInterval) clearInterval(dashboardInterval)
   // Write final dashboard state
   if (opts.htmlOut) {
     fs.writeFileSync(opts.htmlOut, generateDashboardHtml(buildDashboardState()))
