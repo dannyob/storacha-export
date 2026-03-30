@@ -75,6 +75,8 @@ export async function repairUpload(
       log('REPAIR', `  FAIL ${row.block_cid.slice(0, 24)}...: ${err.message}`)
       failed++
     }
+    // Small delay between fetches to avoid 429s from the gateway
+    if ((blocks.length + failed) % 10 === 0) await new Promise(r => setTimeout(r, 200))
   }
 
   if (skipped > 0) {
