@@ -111,9 +111,8 @@ export async function exportUpload(options: ExportUploadOptions): Promise<void> 
       // Tee the stream: one copy goes to backend, the other to block tracking
       const backendStream = new PassThrough()
       const trackingStream = new PassThrough()
-      countingStream.on('data', (chunk) => { backendStream.write(chunk); trackingStream.write(chunk) })
-      countingStream.on('end', () => { backendStream.end(); trackingStream.end() })
-      countingStream.on('error', (err) => { backendStream.destroy(err); trackingStream.destroy(err) })
+      countingStream.pipe(backendStream)
+      countingStream.pipe(trackingStream)
 
       // Track blocks from the tee'd stream (non-blocking — errors don't stop the import)
       const trackingPromise = (async () => {
@@ -132,7 +131,7 @@ export async function exportUpload(options: ExportUploadOptions): Promise<void> 
               } catch {}
             }
             blockCount++
-            if (blockCount % 10 === 0) {
+            if (blockCount % 100 === 0) {
               const progress = manifest.getProgress(rootCid)
               onProgress?.({ type: 'progress', rootCid, bytes: byteCount, blocks: blockCount, totalBlocks: progress.total || undefined })
             }
