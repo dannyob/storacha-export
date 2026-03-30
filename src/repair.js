@@ -54,17 +54,15 @@ export async function repairTruncatedCar(rootCid, gatewayUrl, onProgress) {
   const roots = await iterator.getRoots()
 
   const seenCids = new Set()
-  const dagPBLinks = []  // all links found in dag-pb nodes
-  const dagPBCids = new Set() // CIDs that are dag-pb nodes
+  const dagPBLinks = []  // { cidStr, codec } for all links found in dag-pb nodes
 
   try {
     for await (const { cid, bytes } of iterator) {
       seenCids.add(cid.toString())
       if (cid.code === DAG_PB_CODE) {
-        dagPBCids.add(cid.toString())
         const node = decode(bytes)
         for (const link of node.Links) {
-          dagPBLinks.push(link.Hash.toString())
+          dagPBLinks.push({ cidStr: link.Hash.toString(), codec: link.Hash.code })
         }
       }
     }
@@ -72,22 +70,22 @@ export async function repairTruncatedCar(rootCid, gatewayUrl, onProgress) {
     // Expected — truncation
   }
 
-  const missing = [...new Set(dagPBLinks.filter(l => !seenCids.has(l)))]
+  const missingAll = dagPBLinks.filter(l => !seenCids.has(l.cidStr))
+  const missingUnique = [...new Map(missingAll.map(l => [l.cidStr, l])).values()]
+  const missingDagPB = missingUnique.filter(l => l.codec === DAG_PB_CODE)
 
-  if (missing.length === 0) {
+  if (missingUnique.length === 0) {
     log('REPAIR', `[${rootCid.slice(0, 24)}...] No missing blocks found — CAR may be complete`)
     return null
   }
 
-  // Check if any missing blocks are dag-pb nodes (we'd need their links too)
-  // We can tell by checking if any missing CID appears as a link target from
-  // another dag-pb node that itself has children. In practice, for UnixFS,
-  // missing dag-pb nodes would mean we can't enumerate all leaves.
-  // Simple check: if we have dag-pb nodes linking to the missing CIDs,
-  // the missing CIDs are likely raw leaves. If a missing CID was itself
-  // referenced from within a dag-pb subtree we haven't seen, we're in trouble.
-  // For now, optimistically proceed — the fetch will tell us if blocks are
-  // actually available.
+  if (missingDagPB.length > 0) {
+    log('REPAIR', `[${rootCid.slice(0, 24)}...] Cannot repair: ${missingDagPB.length} missing DAG-PB node(s) — tree structure incomplete`)
+    log('REPAIR', `  Missing structure nodes: ${missingDagPB.map(l => l.cidStr.slice(0, 24) + '...').join(', ')}`)
+    return null
+  }
+
+  const missing = missingUnique.map(l => l.cidStr)
 
   log('REPAIR', `[${rootCid.slice(0, 24)}...] Have ${seenCids.size} blocks, missing ${missing.length} — fetching individually`)
   onProgress?.({ type: 'repair', rootCid, total: missing.length, fetched: 0 })

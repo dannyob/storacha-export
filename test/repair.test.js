@@ -130,6 +130,127 @@ describe('repair', () => {
   })
 })
 
+/**
+ * Analyze a (possibly truncated) CAR to determine if repair is possible.
+ * Returns { seen, missing, missingDagPB, repairable }
+ */
+async function analyzeTruncatedCar(carBytes) {
+  const reader = await CarReader.fromBytes(new Uint8Array(carBytes)).catch(() => null)
+  const seen = new Set()
+  const allLinks = [] // { cid: string, codec: number }
+
+  if (!reader) return { seen, missing: [], missingDagPB: [], repairable: false }
+
+  for await (const { cid, bytes } of reader.blocks()) {
+    seen.add(cid.toString())
+    if (cid.code === 0x70) {
+      const node = dagPB.decode(bytes)
+      for (const link of node.Links) {
+        allLinks.push({ cid: link.Hash.toString(), codec: link.Hash.code })
+      }
+    }
+  }
+
+  const missing = allLinks.filter(l => !seen.has(l.cid))
+  const missingDagPB = missing.filter(l => l.codec === 0x70)
+  const missingRaw = missing.filter(l => l.codec === 0x55)
+
+  return {
+    seen,
+    missing: missing.map(l => l.cid),
+    missingDagPB: missingDagPB.map(l => l.cid),
+    missingRaw: missingRaw.map(l => l.cid),
+    repairable: missingDagPB.length === 0 && missing.length > 0,
+  }
+}
+
+describe('truncated CAR analysis', () => {
+  it('missing only raw leaves → repairable', async () => {
+    // root (dag-pb) -> [leaf1, leaf2, leaf3], CAR has root + leaf1
+    const leaf1 = await makeRawBlock('leaf-one')
+    const leaf2 = await makeRawBlock('leaf-two')
+    const leaf3 = await makeRawBlock('leaf-three')
+    const root = await makeDagPBNode([leaf1, leaf2, leaf3])
+    const truncated = await buildTestCar([root, leaf1], [root])
+
+    const analysis = await analyzeTruncatedCar(truncated)
+    assert.equal(analysis.repairable, true)
+    assert.equal(analysis.missing.length, 2)
+    assert.equal(analysis.missingDagPB.length, 0)
+  })
+
+  it('missing intermediate dag-pb node → NOT repairable', async () => {
+    // root (dag-pb) -> [intermediate (dag-pb), leaf1]
+    // intermediate -> [leaf2, leaf3]
+    // CAR has root + leaf1 only (missing intermediate, leaf2, leaf3)
+    const leaf1 = await makeRawBlock('leaf-one')
+    const leaf2 = await makeRawBlock('leaf-two')
+    const leaf3 = await makeRawBlock('leaf-three')
+    const intermediate = await makeDagPBNode([leaf2, leaf3])
+    const root = await makeDagPBNode([intermediate, leaf1])
+    const truncated = await buildTestCar([root, leaf1], [root])
+
+    const analysis = await analyzeTruncatedCar(truncated)
+    assert.equal(analysis.repairable, false)
+    assert.equal(analysis.missingDagPB.length, 1)
+    assert.ok(analysis.missingDagPB.includes(intermediate.cid.toString()))
+    // We only know about the intermediate, not leaf2/leaf3 behind it
+    assert.equal(analysis.missing.length, 1)
+  })
+
+  it('all blocks present → not repairable (nothing to do)', async () => {
+    const leaf1 = await makeRawBlock('leaf-one')
+    const root = await makeDagPBNode([leaf1])
+    const complete = await buildTestCar([root, leaf1], [root])
+
+    const analysis = await analyzeTruncatedCar(complete)
+    assert.equal(analysis.repairable, false) // nothing missing
+    assert.equal(analysis.missing.length, 0)
+  })
+
+  it('deep tree with all dag-pb nodes present → repairable', async () => {
+    // root -> [intermediate1, intermediate2]
+    // intermediate1 -> [leaf1, leaf2]
+    // intermediate2 -> [leaf3, leaf4]
+    // CAR has root, intermediate1, intermediate2, leaf1 (missing leaf2, leaf3, leaf4)
+    const leaf1 = await makeRawBlock('leaf-1')
+    const leaf2 = await makeRawBlock('leaf-2')
+    const leaf3 = await makeRawBlock('leaf-3')
+    const leaf4 = await makeRawBlock('leaf-4')
+    const inter1 = await makeDagPBNode([leaf1, leaf2])
+    const inter2 = await makeDagPBNode([leaf3, leaf4])
+    const root = await makeDagPBNode([inter1, inter2])
+    const truncated = await buildTestCar([root, inter1, inter2, leaf1], [root])
+
+    const analysis = await analyzeTruncatedCar(truncated)
+    assert.equal(analysis.repairable, true)
+    assert.equal(analysis.missing.length, 3) // leaf2, leaf3, leaf4
+    assert.equal(analysis.missingDagPB.length, 0)
+  })
+
+  it('partially missing dag-pb in deep tree → NOT repairable', async () => {
+    // root -> [inter1, inter2]
+    // inter1 -> [leaf1, leaf2]
+    // inter2 -> [leaf3, leaf4]
+    // CAR has root + inter1 + leaf1 (missing inter2, leaf2, leaf3, leaf4)
+    const leaf1 = await makeRawBlock('leaf-1')
+    const leaf2 = await makeRawBlock('leaf-2')
+    const leaf3 = await makeRawBlock('leaf-3')
+    const leaf4 = await makeRawBlock('leaf-4')
+    const inter1 = await makeDagPBNode([leaf1, leaf2])
+    const inter2 = await makeDagPBNode([leaf3, leaf4])
+    const root = await makeDagPBNode([inter1, inter2])
+    const truncated = await buildTestCar([root, inter1, leaf1], [root])
+
+    const analysis = await analyzeTruncatedCar(truncated)
+    assert.equal(analysis.repairable, false)
+    assert.equal(analysis.missingDagPB.length, 1) // inter2
+    assert.ok(analysis.missingDagPB.includes(inter2.cid.toString()))
+    // We know about leaf2 (from inter1) and inter2 (from root), but not leaf3/leaf4
+    assert.equal(analysis.missing.length, 2) // inter2 + leaf2
+  })
+})
+
 import { JobQueue } from '../src/queue.js'
 
 describe('queue: new methods', () => {
