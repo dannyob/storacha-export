@@ -138,4 +138,41 @@ export class UploadQueue {
       downloading: number; partial: number; repairing: number; total_bytes: number
     }
   }
+
+  getStatsBySpace(spaceNames: string[]): Array<{
+    space_name: string; done: number; errors: number; pending: number;
+    active: number; total: number; bytes: number
+  }> {
+    const placeholders = spaceNames.map(() => '?').join(',')
+    return this.db.prepare(`
+      SELECT space_name,
+        COALESCE(SUM(CASE WHEN status = 'complete' THEN 1 ELSE 0 END), 0) as done,
+        COALESCE(SUM(CASE WHEN status = 'error' THEN 1 ELSE 0 END), 0) as errors,
+        COALESCE(SUM(CASE WHEN status = 'pending' THEN 1 ELSE 0 END), 0) as pending,
+        COALESCE(SUM(CASE WHEN status IN ('downloading', 'repairing') THEN 1 ELSE 0 END), 0) as active,
+        COUNT(*) as total,
+        COALESCE(SUM(bytes_transferred), 0) as bytes
+      FROM uploads
+      WHERE space_name IN (${placeholders})
+      GROUP BY space_name ORDER BY total DESC
+    `).all(...spaceNames) as any[]
+  }
+
+  getActiveJobs(limit = 5): Array<{ space_name: string; root_cid: string; status: string }> {
+    return this.db.prepare(
+      "SELECT space_name, root_cid, status FROM uploads WHERE status IN ('downloading', 'repairing') ORDER BY updated_at DESC LIMIT ?"
+    ).all(limit) as any[]
+  }
+
+  getRecentDone(limit = 5): Array<{ space_name: string; root_cid: string }> {
+    return this.db.prepare(
+      "SELECT space_name, root_cid FROM uploads WHERE status = 'complete' ORDER BY updated_at DESC LIMIT ?"
+    ).all(limit) as any[]
+  }
+
+  getRecentErrors(limit = 10): Array<{ space_name: string; root_cid: string; error_msg: string | null }> {
+    return this.db.prepare(
+      "SELECT space_name, root_cid, error_msg FROM uploads WHERE status = 'error' ORDER BY updated_at DESC LIMIT ?"
+    ).all(limit) as any[]
+  }
 }
