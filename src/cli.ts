@@ -63,7 +63,7 @@ async function _main(argv: string[]) {
   const spaceSizes = new Map<string, number>()
   let queue: UploadQueue | undefined
   let selectedSpaceNames: string[] = []
-  const sessionStart = new Date().toISOString().replace('T', ' ').slice(0, 19)
+  let sessionStart = new Date().toISOString().replace('T', ' ').slice(0, 19)
   const activeJobInfo = new Map<string, { spaceName: string; bytes: number; blocks: number; totalBlocks?: number; startedAt: number; mode: 'car' | 'repair' }>()
 
   function addLogLine(msg: string) {
@@ -354,6 +354,8 @@ async function _main(argv: string[]) {
       log('INFO', `Found ${found}/${pending.length} already in ${backend.name}`)
     }
   }
+  // Reset session start to after sweep — so recently completed only shows actual exports
+  sessionStart = new Date().toISOString().replace('T', ' ').slice(0, 19)
   statusMessage = `Ready — ${queue.getStats().pending} pending, ${queue.getStats().complete} already done`
 
   // --- Verify only? ---
