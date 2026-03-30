@@ -152,6 +152,40 @@ export class JobQueue {
     ).all()
   }
 
+  getStatsBySpace(spaceNames) {
+    const placeholders = spaceNames.map(() => '?').join(',')
+    return this.db.prepare(`
+      SELECT space_name,
+        SUM(CASE WHEN status = 'done' THEN 1 ELSE 0 END) as done,
+        SUM(CASE WHEN status = 'error' THEN 1 ELSE 0 END) as errors,
+        SUM(CASE WHEN status = 'pending' THEN 1 ELSE 0 END) as pending,
+        SUM(CASE WHEN status = 'in_progress' THEN 1 ELSE 0 END) as active,
+        COUNT(*) as total,
+        COALESCE(SUM(bytes_transferred), 0) as bytes
+      FROM jobs
+      WHERE space_name IN (${placeholders})
+      GROUP BY space_name ORDER BY total DESC
+    `).all(...spaceNames)
+  }
+
+  getActiveJobs(limit = 5) {
+    return this.db.prepare(
+      'SELECT space_name, root_cid, updated_at FROM jobs WHERE status = ? ORDER BY updated_at DESC LIMIT ?'
+    ).all('in_progress', limit)
+  }
+
+  getRecentDone(limit = 5) {
+    return this.db.prepare(
+      'SELECT space_name, root_cid, bytes_transferred, updated_at FROM jobs WHERE status = ? ORDER BY updated_at DESC LIMIT ?'
+    ).all('done', limit)
+  }
+
+  getRecentErrors(limit = 10) {
+    return this.db.prepare(
+      'SELECT space_name, root_cid, error_msg, updated_at FROM jobs WHERE status = ? ORDER BY updated_at DESC LIMIT ?'
+    ).all('error', limit)
+  }
+
   close() {
     this.db.close()
   }
