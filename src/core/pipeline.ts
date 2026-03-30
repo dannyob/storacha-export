@@ -193,13 +193,15 @@ export async function exportUpload(options: ExportUploadOptions): Promise<void> 
     } catch (err: any) {
       lastError = err
       cleanupStreams?.()
-      // Clear manifest — tracking tee may have recorded blocks that the backend never received
-      manifest.clear(rootCid)
       if (attempt < maxRetries) {
+        // Reset seen flags between retries — tee may have recorded blocks the backend didn't get
+        // But keep DAG links so next attempt's tracking builds on known structure
+        manifest.resetSeen(rootCid)
         const delay = Math.min(1000 * Math.pow(2, attempt), 30000)
         onProgress?.({ type: 'retry', rootCid, attempt, delay, error: err.message })
         await new Promise(r => setTimeout(r, delay))
       }
+      // On last attempt: keep manifest with seen flags — inline repair needs to know what's missing
     }
   }
 
