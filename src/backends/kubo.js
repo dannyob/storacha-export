@@ -57,6 +57,18 @@ export class KuboBackend {
     }
   }
 
+  async hasBlock(cid) {
+    try {
+      const res = await fetch(
+        `${this.apiUrl}/api/v0/block/stat?arg=${cid}`,
+        { method: 'POST' }
+      )
+      return res.ok
+    } catch {
+      return false
+    }
+  }
+
   async importCar(rootCid, stream) {
     // Stream multipart form data without buffering the entire CAR
     const body = multipartStream('file', `${rootCid}.car`, stream)

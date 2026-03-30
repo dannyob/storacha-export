@@ -36,10 +36,11 @@ const fetchDispatcher = new Agent({
  * @param {(info: object) => void} [onProgress]
  * @param {object} [options]
  * @param {string} [options.spaceName]
+ * @param {(cidStr: string) => Promise<boolean>} [options.hasBlock] — check if a block already exists in the target (e.g. from a previous partial repair)
  * @returns {Promise<{stream: Readable, blockCount: number} | null>} CAR stream of missing blocks, or null if repair not possible
  */
 export async function repairTruncatedCar(rootCid, gatewayUrl, onProgress, options = {}) {
-  const { spaceName = '?' } = options
+  const { spaceName = '?', hasBlock } = options
   const { decode } = await getDagPB()
   const tag = `[${spaceName}] ${rootCid.slice(0, 24)}...`
 
@@ -94,10 +95,20 @@ export async function repairTruncatedCar(rootCid, gatewayUrl, onProgress, option
   log('REPAIR', `${tag} Have ${seenCids.size} blocks, missing ${missing.length} — fetching individually`)
   onProgress?.({ type: 'repair', rootCid, spaceName, total: missing.length, fetched: 0 })
 
-  // Step 2: Fetch missing blocks
+  // Step 2: Fetch missing blocks (skip any already in target from previous partial repairs)
   const fetchedBlocks = []
   let failures = 0
+  let skipped = 0
   for (const [i, cidStr] of missing.entries()) {
+    // Check if target already has this block
+    if (hasBlock) {
+      try {
+        if (await hasBlock(cidStr)) {
+          skipped++
+          continue
+        }
+      } catch { /* couldn't check, fetch it */ }
+    }
     const blockUrl = `https://${cidStr}.ipfs.w3s.link/?format=raw`
     try {
       const blockRes = await fetch(blockUrl, { dispatcher: fetchDispatcher })
@@ -125,9 +136,17 @@ export async function repairTruncatedCar(rootCid, gatewayUrl, onProgress, option
     }
   }
 
-  if (fetchedBlocks.length === 0) {
+  if (skipped > 0) {
+    log('REPAIR', `${tag} ${skipped} blocks already in target from previous repair`)
+  }
+
+  if (fetchedBlocks.length === 0 && skipped === 0) {
     log('REPAIR', `${tag} Could not fetch any missing blocks`)
     return null
+  }
+
+  if (fetchedBlocks.length === 0 && skipped > 0) {
+    log('REPAIR', `${tag} All blocks already present — just needs pinning`)
   }
 
   if (failures > 0) {
