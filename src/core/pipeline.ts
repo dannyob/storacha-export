@@ -193,6 +193,8 @@ export async function exportUpload(options: ExportUploadOptions): Promise<void> 
     } catch (err: any) {
       lastError = err
       cleanupStreams?.()
+      // Clear manifest — tracking tee may have recorded blocks that the backend never received
+      manifest.clear(rootCid)
       if (attempt < maxRetries) {
         const delay = Math.min(1000 * Math.pow(2, attempt), 30000)
         onProgress?.({ type: 'retry', rootCid, attempt, delay, error: err.message })
