@@ -63,7 +63,7 @@ async function _main(argv: string[]) {
   const spaceSizes = new Map<string, number>()
   let queue: UploadQueue | undefined
   let selectedSpaceNames: string[] = []
-  const activeJobInfo = new Map<string, { spaceName: string; bytes: number; blocks: number; startedAt: number; mode: 'car' | 'repair'; repairTotal?: number }>()
+  const activeJobInfo = new Map<string, { spaceName: string; bytes: number; blocks: number; totalBlocks?: number; startedAt: number; mode: 'car' | 'repair' }>()
 
   function addLogLine(msg: string) {
     logLines.push(msg)
@@ -80,10 +80,13 @@ async function _main(argv: string[]) {
       const elapsed = live ? Math.round((Date.now() - live.startedAt) / 1000) : 0
       let detail = j.status
       if (live?.mode === 'repair') {
-        const pct = live.repairTotal ? ` (${Math.round(100 * live.blocks / live.repairTotal)}%)` : ''
-        detail = `repairing: ${live.blocks}/${live.repairTotal ?? '?'} blocks${pct} / ${filesize(live.bytes)} / ${elapsed}s`
+        const total = live.totalBlocks ?? '?'
+        const pct = live.totalBlocks ? ` (${Math.round(100 * live.blocks / live.totalBlocks)}%)` : ''
+        detail = `repairing: ${live.blocks}/${total} blocks${pct} / ${filesize(live.bytes)} / ${elapsed}s`
       } else if (live && live.bytes > 0) {
-        detail = `${filesize(live.bytes)} / ${live.blocks} blocks / ${elapsed}s`
+        const blockStr = live.totalBlocks ? `${live.blocks}/${live.totalBlocks}` : `${live.blocks}`
+        const pct = live.totalBlocks ? ` (${Math.round(100 * live.blocks / live.totalBlocks)}%)` : ''
+        detail = `${filesize(live.bytes)} / ${blockStr} blocks${pct} / ${elapsed}s`
       } else if (live) {
         detail = `connecting... ${elapsed}s`
       }
@@ -133,14 +136,14 @@ async function _main(argv: string[]) {
           break
         case 'progress':
           { const entry = activeJobInfo.get(cid)
-            if (entry) { entry.bytes = info.bytes; entry.blocks = info.blocks } }
+            if (entry) { entry.bytes = info.bytes; entry.blocks = info.blocks; if (info.totalBlocks) entry.totalBlocks = info.totalBlocks } }
           break
         case 'repairing':
           activeJobInfo.set(cid, { spaceName: info.spaceName || '', bytes: 0, blocks: 0, startedAt: Date.now(), mode: 'repair' })
           break
         case 'repair-progress':
           { const entry = activeJobInfo.get(cid)
-            if (entry) { entry.bytes = info.bytes; entry.blocks = info.fetched; entry.repairTotal = info.total; entry.mode = 'repair' } }
+            if (entry) { entry.bytes = info.bytes; entry.blocks = info.fetched; entry.totalBlocks = info.total; entry.mode = 'repair' } }
           break
         case 'done':
         case 'error':

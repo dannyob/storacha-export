@@ -37,8 +37,9 @@ export async function exportUpload(options: ExportUploadOptions): Promise<void> 
         for await (const block of tracked) {
           byteCount += block.bytes.length
           blockCount++
-          if (blockCount % 50 === 0) {
-            onProgress?.({ type: 'progress', rootCid, bytes: byteCount, blocks: blockCount })
+          if (blockCount % 10 === 0) {
+            const progress = manifest.getProgress(rootCid)
+            onProgress?.({ type: 'progress', rootCid, bytes: byteCount, blocks: blockCount, totalBlocks: progress.total || undefined })
           }
           yield block
         }
