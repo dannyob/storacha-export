@@ -122,7 +122,7 @@ export function generateDashboardHtml(state: DashboardState): string {
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <meta http-equiv="refresh" content="5">
 <title>storacha-export Dashboard</title>
-<link href="https://fonts.googleapis.com/css2?family=Archivo:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Archivo:wght@400;500;600;700;800;900&display=swap" rel="stylesheet" media="print" onload="this.media='all'">
 <style>
   :root {
     --ff-blue-1: #EFF6FC; --ff-blue-2: #D8EBFB; --ff-blue-3: #73B4ED;
@@ -132,7 +132,7 @@ export function generateDashboardHtml(state: DashboardState): string {
     --green: #22c55e; --red: #ef4444; --yellow: #eab308; --orange: #f97316;
   }
   *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-  body { font-family: 'Archivo', sans-serif; background: #f7f8fc; color: var(--ff-text); }
+  body { font-family: 'Archivo', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #f7f8fc; color: var(--ff-text); }
   header {
     background: linear-gradient(160deg, var(--ff-blue-8) 0%, var(--ff-bg) 50%, var(--ff-blue-7) 100%);
     color: white; padding: 2rem 1.5rem 1.5rem; text-align: center;
