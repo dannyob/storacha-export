@@ -5,8 +5,10 @@ import { enumerateUploads } from './enumerator.js'
 import { JobQueue } from './queue.js'
 import { createBackend, listBackends } from './backends/index.js'
 import { executeAll } from './executor.js'
-import { createSpinner, createProgressBar, log } from './progress.js'
+import { createSpinner, createProgressBar, log, ts } from './progress.js'
 import { printRooster } from './rooster.js'
+import { startDashboard } from './server.js'
+import { generateDashboardHtml } from './dashboard.js'
 import fs from 'node:fs'
 import path from 'node:path'
 
@@ -50,7 +52,9 @@ async function _main(argv) {
     .option('--dry-run', 'Enumerate only, do not transfer')
     .option('--gateway <url>', 'Gateway URL', 'https://w3s.link')
     .option('--db <path>', 'SQLite database path', 'storacha-export.db')
-    .option('--log-format <format>', 'Log format: text or json')
+    .option('--serve [host:port]', 'Start dashboard HTTP server (default: 127.0.0.1, random port)')
+    .option('--serve-password <pass>', 'HTTP Basic Auth password for dashboard')
+    .option('--html-out <path>', 'Write dashboard HTML to file periodically')
 
   program.parse(argv)
   const opts = program.opts()
@@ -336,15 +340,84 @@ async function _main(argv) {
     process.exit(0)
   }
 
+  // --- Dashboard setup ---
+  const selectedSpaceNames = new Set(selectedSpaces.map(s => s.name))
+  const spaceNamesList = selectedSpaces.map(s => s.name)
+  const spaceSizesMap = Object.fromEntries(selectedSpaces.map(s => [s.name, s.totalBytes || 0]))
+
+  // Log ring buffer for dashboard
+  const logBuffer = []
+  const MAX_LOG_LINES = 50
+  function addLogLine(level, msg) {
+    const line = `${ts()} [${process.pid}] ${level} ${msg}`
+    logBuffer.push(line)
+    if (logBuffer.length > MAX_LOG_LINES) logBuffer.shift()
+  }
+
+  function collectDashboardState() {
+    const stats = queue.getStats()
+    const bySpace = queue.getStatsBySpace(spaceNamesList)
+    // Adjust stats to only count selected spaces
+    const filteredStats = {
+      total: bySpace.reduce((s, r) => s + r.total, 0),
+      done: bySpace.reduce((s, r) => s + r.done, 0),
+      error: bySpace.reduce((s, r) => s + r.errors, 0),
+      pending: bySpace.reduce((s, r) => s + r.pending, 0),
+    }
+    const logLines = logBuffer
+      .map(l => l.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'))
+      .map(l => {
+        if (l.includes('ERROR')) return `<span class="log-error">${l}</span>`
+        if (l.includes('RETRY')) return `<span class="log-warn">${l}</span>`
+        if (l.includes('REPAIR')) return `<span class="log-repair">${l}</span>`
+        if (l.includes('DONE')) return `<span class="log-done">${l}</span>`
+        return l
+      })
+      .join('\n')
+    return {
+      stats: filteredStats,
+      bySpace,
+      spaceSizes: spaceSizesMap,
+      activeJobs: queue.getActiveJobs(),
+      recentDone: queue.getRecentDone(),
+      recentErrors: queue.getRecentErrors(),
+      logLines,
+      pid: process.pid,
+    }
+  }
+
+  // Start dashboard server if requested
+  if (opts.serve !== undefined) {
+    const serveArg = typeof opts.serve === 'string' ? opts.serve : '127.0.0.1:0'
+    const lastColon = serveArg.lastIndexOf(':')
+    const host = lastColon > 0 ? serveArg.slice(0, lastColon) : '127.0.0.1'
+    const port = lastColon > 0 ? parseInt(serveArg.slice(lastColon + 1), 10) : 0
+    const { url } = await startDashboard({
+      host, port,
+      password: opts.servePassword,
+      getHtml: () => generateDashboardHtml(collectDashboardState()),
+    })
+    console.log(`Dashboard: ${url}`)
+  }
+
+  // Periodic HTML file output
+  let htmlOutInterval
+  if (opts.htmlOut) {
+    htmlOutInterval = setInterval(() => {
+      try {
+        fs.writeFileSync(opts.htmlOut, generateDashboardHtml(collectDashboardState()))
+      } catch {}
+    }, 5000)
+  }
+
   // --- Execute ---
   const stats = queue.getStats()
   console.log(`\nJob queue: ${stats.total} total, ${stats.done} done, ${stats.error} errors, ${stats.pending} pending`)
-  const selectedPending = queue.getPendingCountForSpaces(selectedSpaces.map(s => s.name))
+  const selectedPending = queue.getPendingCountForSpaces(spaceNamesList)
   console.log(`Selected spaces: ${selectedPending} pending`)
   const bar = createProgressBar(selectedPending)
   let completed = 0
 
-  const selectedSpaceNames = new Set(selectedSpaces.map(s => s.name))
   await executeAll(queue, backends, {
     concurrency: opts.concurrency,
     gatewayUrl: opts.gateway,
@@ -358,12 +431,18 @@ async function _main(argv) {
           cid: `[${info.spaceName}] ${cidShort}`,
           rate: size,
         })
+        addLogLine('DONE', `[${info.spaceName}] ${cidShort} ${size}`)
       } else if (info.type === 'downloading') {
         log('DOWNLOADING', `[${info.spaceName}] ${info.rootCid.slice(0, 24)}... ${filesize(info.bytes)} so far`)
+        addLogLine('DOWNLOADING', `[${info.spaceName}] ${info.rootCid.slice(0, 24)}... ${filesize(info.bytes)} so far`)
       } else if (info.type === 'error') {
         log('ERROR', `[${info.spaceName}] ${info.rootCid}: ${info.error}`)
+        addLogLine('ERROR', `[${info.spaceName}] ${info.rootCid}: ${info.error}`)
       } else if (info.type === 'retry') {
         log('RETRY', `[${info.spaceName}] ${info.rootCid} attempt ${info.attempt}, waiting ${info.delay}ms: ${info.error}`)
+        addLogLine('RETRY', `[${info.spaceName}] ${info.rootCid} attempt ${info.attempt}: ${info.error}`)
+      } else if (info.type === 'repair') {
+        addLogLine('REPAIR', `[${info.rootCid?.slice(0, 24)}...] fetched ${info.fetched}/${info.total} blocks`)
       } else if (info.type === 'complete') {
         bar.stop()
       }
@@ -371,6 +450,7 @@ async function _main(argv) {
   })
 
   bar.stop()
+  if (htmlOutInterval) clearInterval(htmlOutInterval)
 
   // --- Summary ---
   const finalStats = queue.getStats()
@@ -396,6 +476,10 @@ async function _main(argv) {
   }
 
   // --- Cleanup ---
+  // Final dashboard write
+  if (opts.htmlOut) {
+    try { fs.writeFileSync(opts.htmlOut, generateDashboardHtml(collectDashboardState())) } catch {}
+  }
   for (const be of backends) {
     if (be.close) await be.close()
   }

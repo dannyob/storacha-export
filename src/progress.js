@@ -60,5 +60,4 @@ export function createProgressBar(total) {
   }
 }
 
-// Export log function for use elsewhere
-export { log }
+export { log, ts }
