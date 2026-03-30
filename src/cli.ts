@@ -44,7 +44,7 @@ async function _main(argv: string[]) {
     .option('--exclude-space <name...>', 'Skip named spaces (repeatable)')
     .option('--fresh', 'Start over, discarding previous progress tracking')
     .option('--verify', 'Run verification only (skip export)')
-    .option('--concurrency <n>', 'Parallel transfers', (v: string) => parseInt(v, 10), 1)
+    .option('--concurrency <n>', 'Parallel transfers', (v: string) => parseInt(v, 10), 3)
     .option('--dry-run', 'Enumerate only')
     .option('--gateway <url>', 'Gateway URL', 'https://w3s.link')
     .option('--db <path>', 'SQLite database path', 'storacha-export.db')
