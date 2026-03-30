@@ -68,12 +68,12 @@ export class UploadQueue {
     this._getStats = db.prepare(`
       SELECT
         COUNT(*) as total,
-        SUM(CASE WHEN status = 'complete' THEN 1 ELSE 0 END) as complete,
-        SUM(CASE WHEN status = 'error' THEN 1 ELSE 0 END) as error,
-        SUM(CASE WHEN status = 'pending' THEN 1 ELSE 0 END) as pending,
-        SUM(CASE WHEN status = 'downloading' THEN 1 ELSE 0 END) as downloading,
-        SUM(CASE WHEN status = 'partial' THEN 1 ELSE 0 END) as partial,
-        SUM(CASE WHEN status = 'repairing' THEN 1 ELSE 0 END) as repairing,
+        COALESCE(SUM(CASE WHEN status = 'complete' THEN 1 ELSE 0 END), 0) as complete,
+        COALESCE(SUM(CASE WHEN status = 'error' THEN 1 ELSE 0 END), 0) as error,
+        COALESCE(SUM(CASE WHEN status = 'pending' THEN 1 ELSE 0 END), 0) as pending,
+        COALESCE(SUM(CASE WHEN status = 'downloading' THEN 1 ELSE 0 END), 0) as downloading,
+        COALESCE(SUM(CASE WHEN status = 'partial' THEN 1 ELSE 0 END), 0) as partial,
+        COALESCE(SUM(CASE WHEN status = 'repairing' THEN 1 ELSE 0 END), 0) as repairing,
         COALESCE(SUM(bytes_transferred), 0) as total_bytes
       FROM uploads
     `)
