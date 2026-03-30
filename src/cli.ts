@@ -165,7 +165,7 @@ async function _main(argv: string[]) {
   let cachedHtml = generateDashboardHtml(buildDashboardState())
   const refreshDashboard = () => {
     cachedHtml = generateDashboardHtml(buildDashboardState())
-    if (opts.htmlOut) fs.writeFileSync(opts.htmlOut, cachedHtml)
+    if (opts.htmlOut) fs.writeFileSync(opts.htmlOut, generateDashboardHtml(buildDashboardState(), { staticFile: true }))
   }
   const dashboardInterval = setInterval(refreshDashboard, 2000)
 
@@ -391,7 +391,7 @@ async function _main(argv: string[]) {
   if (dashboardInterval) clearInterval(dashboardInterval)
   // Write final dashboard state
   if (opts.htmlOut) {
-    fs.writeFileSync(opts.htmlOut, generateDashboardHtml(buildDashboardState()))
+    fs.writeFileSync(opts.htmlOut, generateDashboardHtml(buildDashboardState(), { staticFile: true }))
   }
   for (const backend of backends) {
     if (backend.close) await backend.close()

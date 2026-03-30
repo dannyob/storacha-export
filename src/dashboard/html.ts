@@ -36,7 +36,7 @@ function phaseLabel(phase: DashboardState['phase']): string {
   return 'Verify'
 }
 
-export function generateDashboardHtml(state: DashboardState): string {
+export function generateDashboardHtml(state: DashboardState, options?: { staticFile?: boolean }): string {
   const { phase, pid, stats, bySpace, spaceSizes, activeJobs, recentDone, recentErrors, logLines } = state
   const total = stats.total ?? 0
   const complete = stats.complete ?? 0
@@ -120,6 +120,7 @@ export function generateDashboardHtml(state: DashboardState): string {
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
+${options?.staticFile ? '<meta http-equiv="refresh" content="5">' : ''}
 <title>storacha-export Dashboard</title>
 <link href="https://fonts.googleapis.com/css2?family=Archivo:wght@400;500;600;700;800;900&display=swap" rel="stylesheet" media="print" onload="this.media='all'">
 <style>
@@ -237,18 +238,18 @@ export function generateDashboardHtml(state: DashboardState): string {
   <div class="timestamp">Last updated: ${now} UTC &middot; Auto-refreshes every 5s</div>
 <script>
 document.getElementById('logPanel').scrollTop = document.getElementById('logPanel').scrollHeight;
-setInterval(async () => {
+${options?.staticFile ? '' : `setInterval(async () => {
   try {
     const r = await fetch(location.href);
     const html = await r.text();
     const doc = new DOMParser().parseFromString(html, 'text/html');
-    const newBody = doc.querySelector('.container');
     const newHeader = doc.querySelector('header');
+    const newBody = doc.querySelector('.container');
     if (newHeader) document.querySelector('header').innerHTML = newHeader.innerHTML;
     if (newBody) document.querySelector('.container').innerHTML = newBody.innerHTML;
     document.getElementById('logPanel').scrollTop = document.getElementById('logPanel').scrollHeight;
   } catch {}
-}, 3000);
+}, 3000);`}
 </script>
 </div>
 </body>
