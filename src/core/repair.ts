@@ -12,7 +12,7 @@ export interface RepairResult {
 
 export interface RepairOptions {
   hasBlock?: (cid: string) => Promise<boolean>
-  onProgress?: (fetched: number, total: number) => void
+  onProgress?: (fetched: number, total: number, bytes: number) => void
 }
 
 /**
@@ -47,6 +47,7 @@ export async function repairUpload(
   const blocks: Block[] = []
   let skipped = 0
   let failed = 0
+  let repairBytes = 0
 
   for (const [i, row] of missing.entries()) {
     // Check if backend already has this block
@@ -63,11 +64,12 @@ export async function repairUpload(
     try {
       const block = await fetchBlock(row.block_cid)
       blocks.push(block)
+      repairBytes += block.bytes.length
       manifest.markSeen(rootCid, row.block_cid, row.codec)
+      onProgress?.(blocks.length, missing.length, repairBytes)
 
       if ((i + 1) % 50 === 0) {
-        log('REPAIR', `  ${i + 1}/${missing.length} fetched`)
-        onProgress?.(i + 1, missing.length)
+        log('REPAIR', `  ${i + 1}/${missing.length} fetched (${blocks.length} new)`)
       }
     } catch (err: any) {
       log('REPAIR', `  FAIL ${row.block_cid.slice(0, 24)}...: ${err.message}`)

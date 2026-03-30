@@ -86,7 +86,7 @@ export async function exportUpload(options: ExportUploadOptions): Promise<void> 
       (cidStr) => fetcher.fetchBlock(cidStr),
       {
         hasBlock: backend.hasBlock?.bind(backend),
-        onProgress: (fetched, total) => onProgress?.({ type: 'repair-progress', rootCid, fetched, total }),
+        onProgress: (fetched, total, bytes) => onProgress?.({ type: 'repair-progress', rootCid, fetched, total, bytes }),
       },
     )
 
