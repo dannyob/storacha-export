@@ -1,5 +1,4 @@
 import { Readable } from 'node:stream'
-import { CarWriter } from '@ipld/car'
 import { CID } from 'multiformats/cid'
 import type { ExportBackend } from './interface.js'
 import type { BlockStream, Block } from '../core/blocks.js'
@@ -44,24 +43,9 @@ export class KuboBackend implements ExportBackend {
     if (!res.ok) throw new Error(`Cannot connect to kubo at ${this.apiUrl}: ${res.status}`)
   }
 
-  async importCar(rootCid: string, blocks: BlockStream): Promise<void> {
-    // Convert BlockStream back to a CAR for dag/import
-    const rootCidObj = CID.parse(rootCid)
-    const { writer, out } = CarWriter.create([rootCidObj])
-
-    // Stream the CAR through multipart to kubo
-    const carChunks = (async function* () {
-      for await (const chunk of out) yield chunk
-    })()
-    const body = multipartStream('file', `${rootCid}.car`, carChunks)
-
-    // Feed blocks into the writer in parallel with the upload
-    const writePromise = (async () => {
-      for await (const block of blocks) {
-        await writer.put(block)
-      }
-      await writer.close()
-    })()
+  async importCar(rootCid: string, stream: BlockStream | AsyncIterable<Uint8Array> | NodeJS.ReadableStream): Promise<void> {
+    // Stream directly to kubo — accepts raw CAR bytes or a BlockStream
+    const body = multipartStream('file', `${rootCid}.car`, stream as AsyncIterable<Uint8Array>)
 
     const res = await fetch(`${this.apiUrl}/api/v0/dag/import?pin-roots=true`, {
       method: 'POST',
@@ -69,8 +53,6 @@ export class KuboBackend implements ExportBackend {
       headers: { 'Content-Type': `multipart/form-data; boundary=${BOUNDARY}` },
       duplex: 'half',
     } as any)
-
-    await writePromise
 
     if (!res.ok) {
       const text = await res.text()

@@ -11,6 +11,7 @@ const fetchDispatcher = new Agent({
 })
 
 export class GatewayFetcher {
+  readonly dispatcher = fetchDispatcher
   constructor(private gatewayUrl: string) {}
 
   /**

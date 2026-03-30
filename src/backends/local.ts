@@ -22,21 +22,42 @@ export class LocalBackend implements ExportBackend {
     return fs.existsSync(this.carPath(rootCid))
   }
 
-  async importCar(rootCid: string, blocks: BlockStream): Promise<void> {
+  async importCar(rootCid: string, stream: BlockStream | AsyncIterable<Uint8Array> | NodeJS.ReadableStream): Promise<void> {
     fs.mkdirSync(this.outputDir, { recursive: true })
-    const rootCidObj = CID.parse(rootCid)
-    const { writer, out } = CarWriter.create([rootCidObj])
+    const filePath = this.carPath(rootCid)
 
-    const chunks: Uint8Array[] = []
-    const drain = (async () => { for await (const chunk of out) chunks.push(chunk) })()
+    // Detect if this is a raw byte stream or a BlockStream
+    // by peeking at the first chunk — Blocks have { cid, bytes }, raw is Uint8Array/Buffer
+    const iter = (stream as AsyncIterable<any>)[Symbol.asyncIterator]()
+    const first = await iter.next()
+    if (first.done) return
 
-    for await (const block of blocks) {
-      await writer.put(block)
+    if (first.value && first.value.cid) {
+      // BlockStream — re-serialize to CAR
+      const rootCidObj = CID.parse(rootCid)
+      const { writer, out } = CarWriter.create([rootCidObj])
+      const fileStream = fs.createWriteStream(filePath)
+      const drain = (async () => {
+        for await (const chunk of out) fileStream.write(chunk)
+        fileStream.end()
+        await new Promise<void>((resolve, reject) => { fileStream.on('finish', resolve); fileStream.on('error', reject) })
+      })()
+      await writer.put(first.value)
+      for (let next = await iter.next(); !next.done; next = await iter.next()) {
+        await writer.put(next.value)
+      }
+      await writer.close()
+      await drain
+    } else {
+      // Raw byte stream — write directly
+      const fileStream = fs.createWriteStream(filePath)
+      fileStream.write(first.value)
+      for (let next = await iter.next(); !next.done; next = await iter.next()) {
+        fileStream.write(next.value)
+      }
+      fileStream.end()
+      await new Promise<void>((resolve, reject) => { fileStream.on('finish', resolve); fileStream.on('error', reject) })
     }
-    await writer.close()
-    await drain
-
-    fs.writeFileSync(this.carPath(rootCid), Buffer.concat(chunks))
   }
 
   async getContentSize(rootCid: string): Promise<number | null> {

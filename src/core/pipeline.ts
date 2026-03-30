@@ -1,5 +1,7 @@
+import { Readable, PassThrough } from 'node:stream'
+import { CarBlockIterator } from '@ipld/car'
+import * as dagPB from '@ipld/dag-pb'
 import { GatewayFetcher } from './fetcher.js'
-import { trackBlocks } from './blocks.js'
 import { repairUpload } from './repair.js'
 import type { UploadQueue } from './queue.js'
 import type { BlockManifest } from './manifest.js'
@@ -69,33 +71,84 @@ export async function exportUpload(options: ExportUploadOptions): Promise<void> 
 
   queue.setStatus(rootCid, backend.name, 'downloading')
 
-  // Attempt to download the full CAR
+  // Attempt to download the full CAR — stream raw bytes directly to backend
   let lastError: Error | undefined
   for (let attempt = 1; attempt <= maxRetries; attempt++) {
     try {
-      const rawBlocks = await fetcher.fetchCar(rootCid)
-      const tracked = trackBlocks(rawBlocks, rootCid, manifest)
+      const url = `${gatewayUrl.replace(/\/$/, '')}/ipfs/${rootCid}?format=car`
+      const res = await fetch(url, { dispatcher: fetcher.dispatcher } as any)
 
-      // Count bytes and report progress as they flow through
+      if (!res.ok) {
+        await res.body?.cancel()
+        if (res.status === 429 || res.status >= 500) {
+          const delay = Math.min(1000 * Math.pow(2, attempt), 30000)
+          onProgress?.({ type: 'retry', rootCid, attempt, delay, error: `HTTP ${res.status}` })
+          await new Promise(r => setTimeout(r, delay))
+          continue
+        }
+        throw new Error(`Gateway returned ${res.status}: ${res.statusText}`)
+      }
+
+      // Stream raw CAR bytes through a counting passthrough — no block parsing in the hot path
+      const nodeStream = Readable.fromWeb(res.body! as any)
       let byteCount = 0
-      let blockCount = 0
-      const counted = (async function* () {
-        for await (const block of tracked) {
-          byteCount += block.bytes.length
-          blockCount++
-          if (blockCount % 10 === 0) {
-            const progress = manifest.getProgress(rootCid)
-            onProgress?.({ type: 'progress', rootCid, bytes: byteCount, blocks: blockCount, totalBlocks: progress.total || undefined })
+      let lastProgressTime = Date.now()
+      const countingStream = new PassThrough({
+        transform(chunk, _encoding, callback) {
+          byteCount += chunk.length
+          const now = Date.now()
+          if (now - lastProgressTime > 3000) {
+            onProgress?.({ type: 'progress', rootCid, bytes: byteCount, blocks: 0 })
+            lastProgressTime = now
           }
-          yield block
+          callback(null, chunk)
+        },
+      })
+
+      nodeStream.on('error', (err) => countingStream.destroy(err))
+      nodeStream.pipe(countingStream)
+
+      // Tee the stream: one copy goes to backend, the other to block tracking
+      const backendStream = new PassThrough()
+      const trackingStream = new PassThrough()
+      countingStream.on('data', (chunk) => { backendStream.write(chunk); trackingStream.write(chunk) })
+      countingStream.on('end', () => { backendStream.end(); trackingStream.end() })
+      countingStream.on('error', (err) => { backendStream.destroy(err); trackingStream.destroy(err) })
+
+      // Track blocks from the tee'd stream (non-blocking — errors don't stop the import)
+      const trackingPromise = (async () => {
+        try {
+          const iterator = await CarBlockIterator.fromIterable(trackingStream)
+          let blockCount = 0
+          for await (const { cid, bytes } of iterator) {
+            const cidStr = cid.toString()
+            manifest.markSeen(rootCid, cidStr, cid.code)
+            if (cid.code === 0x70) {
+              try {
+                const node = dagPB.decode(bytes)
+                for (const link of node.Links) {
+                  manifest.addLink(rootCid, link.Hash.toString(), link.Hash.code, cidStr)
+                }
+              } catch {}
+            }
+            blockCount++
+            if (blockCount % 10 === 0) {
+              const progress = manifest.getProgress(rootCid)
+              onProgress?.({ type: 'progress', rootCid, bytes: byteCount, blocks: blockCount, totalBlocks: progress.total || undefined })
+            }
+          }
+        } catch {
+          // Truncated — tracking got what it got
         }
       })()
 
       await withTimeout(
-        backend.importCar(rootCid, counted),
+        backend.importCar(rootCid, backendStream as any),
         uploadTimeout,
         `CAR download ${rootCid.slice(0, 24)}...`,
       )
+
+      await trackingPromise
 
       // Success — verify it's pinned
       if (await backend.hasContent(rootCid)) {

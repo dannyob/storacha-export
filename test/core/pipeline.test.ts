@@ -7,20 +7,29 @@ import { makeRawBlock, makeDagPBNode, buildCarBytes } from './blocks.test.js'
 import http from 'node:http'
 import fs from 'node:fs'
 import type Database from 'better-sqlite3'
+import { CarBlockIterator } from '@ipld/car'
 import type { ExportBackend } from '../../src/backends/interface.js'
-import type { BlockStream } from '../../src/core/blocks.js'
 
 const TEST_DB = '/tmp/storacha-v2-pipeline-test.db'
 
-/** Simple in-memory backend for testing */
+/** Simple in-memory backend for testing — accepts raw CAR byte streams */
 class MemoryBackend implements ExportBackend {
   name = 'memory'
   blocks = new Map<string, Uint8Array>()
   pinned = new Set<string>()
 
-  async importCar(rootCid: string, blocks: BlockStream): Promise<void> {
-    for await (const block of blocks) {
-      this.blocks.set(block.cid.toString(), block.bytes)
+  async importCar(rootCid: string, stream: any): Promise<void> {
+    // Collect raw bytes from the stream
+    const chunks: Uint8Array[] = []
+    for await (const chunk of stream) chunks.push(chunk)
+    const carBytes = Buffer.concat(chunks)
+
+    // Parse CAR to extract blocks
+    const iterator = await CarBlockIterator.fromIterable(
+      (async function* () { yield new Uint8Array(carBytes) })()
+    )
+    for await (const { cid, bytes } of iterator) {
+      this.blocks.set(cid.toString(), bytes)
     }
     this.pinned.add(rootCid)
   }
