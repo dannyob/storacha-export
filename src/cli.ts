@@ -11,7 +11,7 @@ import { createBackend } from './backends/registry.js'
 import { startDashboard } from './dashboard/server.js'
 import { generateDashboardHtml } from './dashboard/html.js'
 import type { DashboardState } from './dashboard/html.js'
-import { log, onLog } from './util/log.js'
+import { log, onLog, type LogLevel } from './util/log.js'
 import { filesize } from './util/format.js'
 import fs from 'node:fs'
 import type { ExportBackend } from './backends/interface.js'
@@ -107,23 +107,22 @@ async function _main(argv: string[]) {
     }
   }
 
-  function formatProgress(info: { type: string; [key: string]: any }): string {
-    const ts = new Date().toISOString().replace('T', ' ').slice(0, 19)
+  function formatProgressMessage(info: { type: string; [key: string]: any }): { level: LogLevel; msg: string } | null {
     const space = info.spaceName ? `[${info.spaceName}]` : ''
     const cid = info.rootCid ? info.rootCid.slice(0, 24) + '...' : ''
     const tag = [space, cid].filter(Boolean).join(' ')
     switch (info.type) {
-      case 'downloading': return `${ts} DOWNLOADING ${tag}`
-      case 'done': return `${ts} DONE ${tag} ${filesize(info.bytes || 0)}`
-      case 'error': return `${ts} ERROR ${tag} ${info.error || 'unknown'}`
-      case 'retry': return `${ts} RETRY ${tag} attempt ${info.attempt} (${info.error})`
-      case 'repairing': return `${ts} REPAIR ${tag} fetching missing blocks`
-      case 'repair-progress': return `${ts} REPAIR ${tag} ${info.fetched}/${info.total} blocks`
-      case 'verifying': return `${ts} VERIFY ${tag}`
-      case 'verified': return `${ts} VERIFY OK ${tag}`
-      case 'verify-failed': return `${ts} VERIFY FAIL ${tag} ${info.error || ''}`
-      case 'export-complete': return `${ts} INFO Export phase complete`
-      default: return `${ts} ${info.type} ${tag}`
+      case 'downloading': return { level: 'DOWNLOADING', msg: tag }
+      case 'done': return { level: 'DONE', msg: `${tag} ${filesize(info.bytes || 0)}` }
+      case 'error': return { level: 'ERROR', msg: `${tag} ${info.error || 'unknown'}` }
+      case 'retry': return { level: 'RETRY', msg: `${tag} attempt ${info.attempt} (${info.error})` }
+      case 'repairing': return { level: 'REPAIR', msg: `${tag} fetching missing blocks` }
+      case 'repair-progress': return { level: 'REPAIR', msg: `${tag} ${info.fetched}/${info.total} blocks` }
+      case 'verifying': return { level: 'VERIFY', msg: tag }
+      case 'verified': return { level: 'VERIFY', msg: `OK ${tag}` }
+      case 'verify-failed': return { level: 'VERIFY', msg: `FAIL ${tag} ${info.error || ''}` }
+      case 'export-complete': return { level: 'INFO', msg: 'Export phase complete' }
+      default: return null
     }
   }
 
@@ -151,9 +150,10 @@ async function _main(argv: string[]) {
           break
       }
     }
-    // Don't log noisy per-block progress events
+    // Log to stdout + dashboard (except noisy per-block progress)
     if (info.type !== 'progress') {
-      addLogLine(formatProgress(info))
+      const formatted = formatProgressMessage(info)
+      if (formatted) log(formatted.level, formatted.msg)
     }
   }
 
