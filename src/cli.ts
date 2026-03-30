@@ -63,7 +63,7 @@ async function _main(argv: string[]) {
   const spaceSizes = new Map<string, number>()
   let queue: UploadQueue | undefined
   let selectedSpaceNames: string[] = []
-  const activeJobInfo = new Map<string, { spaceName: string; bytes: number; blocks: number; startedAt: number }>()
+  const activeJobInfo = new Map<string, { spaceName: string; bytes: number; blocks: number; startedAt: number; mode: 'car' | 'repair'; repairTotal?: number }>()
 
   function addLogLine(msg: string) {
     logLines.push(msg)
@@ -79,7 +79,10 @@ async function _main(argv: string[]) {
       const live = activeJobInfo.get(j.root_cid)
       const elapsed = live ? Math.round((Date.now() - live.startedAt) / 1000) : 0
       let detail = j.status
-      if (live && live.bytes > 0) {
+      if (live?.mode === 'repair') {
+        const pct = live.repairTotal ? ` (${Math.round(100 * live.blocks / live.repairTotal)}%)` : ''
+        detail = `repairing: ${live.blocks}/${live.repairTotal ?? '?'} blocks${pct} / ${filesize(live.bytes)} / ${elapsed}s`
+      } else if (live && live.bytes > 0) {
         detail = `${filesize(live.bytes)} / ${live.blocks} blocks / ${elapsed}s`
       } else if (live) {
         detail = `connecting... ${elapsed}s`
@@ -126,11 +129,18 @@ async function _main(argv: string[]) {
     if (cid) {
       switch (info.type) {
         case 'downloading':
-          activeJobInfo.set(cid, { spaceName: info.spaceName || '', bytes: 0, blocks: 0, startedAt: Date.now() })
+          activeJobInfo.set(cid, { spaceName: info.spaceName || '', bytes: 0, blocks: 0, startedAt: Date.now(), mode: 'car' })
           break
         case 'progress':
           { const entry = activeJobInfo.get(cid)
             if (entry) { entry.bytes = info.bytes; entry.blocks = info.blocks } }
+          break
+        case 'repairing':
+          activeJobInfo.set(cid, { spaceName: info.spaceName || '', bytes: 0, blocks: 0, startedAt: Date.now(), mode: 'repair' })
+          break
+        case 'repair-progress':
+          { const entry = activeJobInfo.get(cid)
+            if (entry) { entry.bytes = info.bytes; entry.blocks = info.fetched; entry.repairTotal = info.total; entry.mode = 'repair' } }
           break
         case 'done':
         case 'error':
