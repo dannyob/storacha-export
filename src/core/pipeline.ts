@@ -111,6 +111,10 @@ export async function exportUpload(options: ExportUploadOptions): Promise<void> 
       // Tee the stream: one copy goes to backend, the other to block tracking
       const backendStream = new PassThrough()
       const trackingStream = new PassThrough()
+      // Handle errors on all streams to prevent unhandled 'error' crashes
+      backendStream.on('error', () => {})
+      trackingStream.on('error', () => {})
+      countingStream.on('error', () => { backendStream.destroy(); trackingStream.destroy() })
       countingStream.pipe(backendStream)
       countingStream.pipe(trackingStream)
 
