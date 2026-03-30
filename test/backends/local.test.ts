@@ -1,7 +1,9 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { LocalBackend } from '../../src/backends/local.js'
-import { makeRawBlock, makeDagPBNode } from '../core/blocks.test.js'
+import { makeRawBlock, makeDagPBNode, buildCarBytes } from '../core/blocks.test.js'
 import { CarBlockIterator } from '@ipld/car'
+import { BlockManifest } from '../../src/core/manifest.js'
+import { createDatabase } from '../../src/core/db.js'
 import fs from 'node:fs'
 import path from 'node:path'
 import os from 'node:os'
@@ -63,5 +65,75 @@ describe('LocalBackend', () => {
     await backend.importCar(root.cid.toString(), blocks())
     const result = await backend.verifyDag!(root.cid.toString())
     expect(result.valid).toBe(true)
+  })
+})
+
+describe('LocalBackend repair', () => {
+  let tmpDir: string
+  let backend: LocalBackend
+
+  beforeEach(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'storacha-v2-local-repair-'))
+    backend = new LocalBackend({ outputDir: tmpDir })
+  })
+
+  afterEach(() => {
+    fs.rmSync(tmpDir, { recursive: true, force: true })
+  })
+
+  it('repairs a truncated CAR by reading from disk + fetching missing blocks', async () => {
+    const dbPath = path.join(tmpDir, 'test.db')
+    const db = createDatabase(dbPath)
+    const manifest = new BlockManifest(db)
+
+    const leaf1 = await makeRawBlock('data-1')
+    const leaf2 = await makeRawBlock('data-2')
+    const leaf3 = await makeRawBlock('data-3')
+    const root = await makeDagPBNode([leaf1, leaf2, leaf3])
+
+    // Write a truncated CAR (root + leaf1 only)
+    const truncatedCar = await buildCarBytes([root, leaf1], [root])
+    const carPath = path.join(tmpDir, `${root.cid.toString()}.car`)
+    fs.writeFileSync(carPath, truncatedCar)
+
+    // Set up manifest as if we'd parsed the truncated CAR
+    manifest.markSeen(root.cid.toString(), root.cid.toString(), 0x70)
+    manifest.markSeen(root.cid.toString(), leaf1.cid.toString(), 0x55)
+    manifest.addLink(root.cid.toString(), leaf1.cid.toString(), 0x55, root.cid.toString())
+    manifest.addLink(root.cid.toString(), leaf2.cid.toString(), 0x55, root.cid.toString())
+    manifest.addLink(root.cid.toString(), leaf3.cid.toString(), 0x55, root.cid.toString())
+
+    // Repair — provide a fetchBlock that serves missing leaves
+    const blockMap = new Map([
+      [leaf2.cid.toString(), leaf2],
+      [leaf3.cid.toString(), leaf3],
+    ])
+
+    const result = await backend.repair(
+      root.cid.toString(),
+      manifest,
+      async (cid) => {
+        const block = blockMap.get(cid)
+        if (!block) throw new Error('not found')
+        return block
+      },
+    )
+
+    expect(result).toBe(true)
+
+    // Verify the repaired CAR is complete
+    const verifyResult = await backend.verifyDag!(root.cid.toString())
+    expect(verifyResult.valid).toBe(true)
+
+    // Verify it has all blocks
+    const repaired = fs.readFileSync(carPath)
+    const iterator = await CarBlockIterator.fromIterable(
+      (async function* () { yield new Uint8Array(repaired) })()
+    )
+    let blockCount = 0
+    for await (const _ of iterator) blockCount++
+    expect(blockCount).toBe(4) // root + 3 leaves
+
+    db.close()
   })
 })
