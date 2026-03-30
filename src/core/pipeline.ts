@@ -21,6 +21,41 @@ export async function exportUpload(options: ExportUploadOptions): Promise<void> 
   const tag = `[${rootCid.slice(0, 24)}...]`
   const fetcher = new GatewayFetcher(gatewayUrl)
 
+  // Check if we already have partial manifest data — skip straight to repair
+  const existingProgress = manifest.getProgress(rootCid)
+  if (existingProgress.total > 0 && existingProgress.missing > 0 && manifest.isRepairable(rootCid)) {
+    log('INFO', `${tag} Resuming repair: ${existingProgress.seen}/${existingProgress.total} blocks, ${existingProgress.missing} missing`)
+    queue.setStatus(rootCid, backend.name, 'repairing')
+    onProgress?.({ type: 'repairing', rootCid })
+
+    const result = await repairUpload(
+      rootCid,
+      manifest,
+      (cidStr) => fetcher.fetchBlock(cidStr),
+      {
+        hasBlock: backend.hasBlock?.bind(backend),
+        onProgress: (fetched, total, bytes) => onProgress?.({ type: 'repair-progress', rootCid, fetched, total, bytes }),
+      },
+    )
+
+    if (result && result.complete) {
+      for (const block of result.blocks) {
+        if (backend.putBlock) {
+          await backend.putBlock(block.cid.toString(), block.bytes)
+        }
+      }
+      if (await backend.hasContent(rootCid)) {
+        queue.markComplete(rootCid, backend.name, 0)
+        onProgress?.({ type: 'done', rootCid, bytes: 0 })
+        log('REPAIR', `${tag} Repaired and verified`)
+        return
+      }
+    }
+
+    // Repair failed — fall through to full download as last resort
+    log('INFO', `${tag} Repair incomplete, trying full CAR download`)
+  }
+
   queue.setStatus(rootCid, backend.name, 'downloading')
 
   // Attempt to download the full CAR
