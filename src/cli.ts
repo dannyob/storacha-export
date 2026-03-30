@@ -69,6 +69,7 @@ async function _main(argv: string[]) {
   const logLines: string[] = []
   const spaceSizes = new Map<string, number>()
   let queue: UploadQueue | undefined
+  let selectedSpaceNames: string[] = []
   let htmlOutInterval: ReturnType<typeof setInterval> | undefined
 
   function addLogLine(msg: string) {
@@ -82,11 +83,11 @@ async function _main(argv: string[]) {
       phase,
       pid: process.pid,
       stats: queue ? queue.getStats() : emptyStats,
-      bySpace: [],
+      bySpace: queue && selectedSpaceNames.length > 0 ? queue.getStatsBySpace(selectedSpaceNames) : [],
       spaceSizes,
-      activeJobs: [],
-      recentDone: [],
-      recentErrors: [],
+      activeJobs: queue ? queue.getActiveJobs() : [],
+      recentDone: queue ? queue.getRecentDone() : [],
+      recentErrors: queue ? queue.getRecentErrors() : [],
       logLines: [...logLines],
       statusMessage,
     }
@@ -192,7 +193,8 @@ async function _main(argv: string[]) {
     selectedSpaces = allSpaces
   }
 
-  const spaceList = selectedSpaces.map((s) => s.name).join(', ')
+  selectedSpaceNames = selectedSpaces.map((s) => s.name)
+  const spaceList = selectedSpaceNames.join(', ')
   console.log(`\nExporting ${selectedSpaces.length} space(s): ${spaceList}`)
   statusMessage = `Selected ${selectedSpaces.length} space(s): ${spaceList}`
   addLogLine(`Selected spaces: ${spaceList}`)
