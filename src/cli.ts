@@ -87,7 +87,7 @@ async function _main(argv: string[]) {
         const db = live.bytes - live.prevBytes
         const rate = dt > 0 ? db / dt : 0
         const stalled = live.bytes > 0 && rate === 0 && dt > 10
-        const rateStr = rate > 0 ? `${filesize(rate)}/s` : (stalled ? 'STALLED' : 'waiting')
+        const rateStr = rate > 0 ? `${filesize(Math.round(rate))}/s` : (stalled ? 'STALLED' : 'waiting')
 
         if (live.mode === 'repair') {
           const total = live.totalBlocks ?? '?'

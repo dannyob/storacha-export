@@ -42,9 +42,8 @@ export class GatewayFetcher {
   async fetchBlock(cidStr: string): Promise<Block> {
     const url = `${this.gatewayUrl.replace(/\/$/, '')}/ipfs/${cidStr}?format=raw`
     const controller = new AbortController()
-    const timeout = setTimeout(() => controller.abort(), 30000)
 
-    try {
+    const doFetch = async (): Promise<Block> => {
       const res = await fetch(url, { dispatcher: blockDispatcher, signal: controller.signal } as any)
 
       if (!res.ok) {
@@ -60,9 +59,15 @@ export class GatewayFetcher {
       }
 
       return { cid: expectedCid, bytes }
-    } finally {
-      clearTimeout(timeout)
     }
+
+    // Hard timeout via Promise.race — guaranteed to reject even if fetch ignores abort
+    return Promise.race([
+      doFetch(),
+      new Promise<never>((_, reject) =>
+        setTimeout(() => { controller.abort(); reject(new Error('Block fetch timeout (30s)')) }, 30000)
+      ),
+    ])
   }
 
   /**
