@@ -98,8 +98,22 @@ export function generateDashboardHtml(state: DashboardState): string {
     </tr>
   `).join('\n')
 
+  function colorizeLogLine(line: string): string {
+    const escaped = line.replace(/&/g, '&amp;').replace(/</g, '&lt;')
+    return escaped
+      .replace(/\b(DONE)\b/, '<span style="color:#22c55e;font-weight:600">$1</span>')
+      .replace(/\b(ERROR)\b/, '<span style="color:#ef4444;font-weight:600">$1</span>')
+      .replace(/\b(RETRY)\b/, '<span style="color:#eab308;font-weight:600">$1</span>')
+      .replace(/\b(REPAIR)\b/, '<span style="color:#a78bfa;font-weight:600">$1</span>')
+      .replace(/\b(DOWNLOADING)\b/, '<span style="color:#38bdf8;font-weight:600">$1</span>')
+      .replace(/\b(VERIFY OK)\b/, '<span style="color:#22c55e;font-weight:600">$1</span>')
+      .replace(/\b(VERIFY FAIL)\b/, '<span style="color:#ef4444;font-weight:600">$1</span>')
+      .replace(/\b(VERIFY)\b(?! OK| FAIL)/, '<span style="color:#818cf8;font-weight:600">$1</span>')
+      .replace(/\b(INFO)\b/, '<span style="color:#94a3b8">$1</span>')
+  }
+
   const logContent = logLines.length > 0
-    ? logLines.map(l => l.replace(/&/g, '&amp;').replace(/</g, '&lt;')).join('\n')
+    ? logLines.map(colorizeLogLine).join('\n')
     : '<span style="color:#4a5568">No log output yet</span>'
 
   return `<!DOCTYPE html>
