@@ -111,11 +111,13 @@ export async function executeJob(job, backends, queue, options = {}) {
   // If the error looks like a truncated CAR, try repair
   if (lastError?.message?.includes('unexpected EOF') || lastError?.message?.includes('import failed')) {
     try {
+      // Use the first backend's hasBlock if available (e.g. kubo block/stat)
+      const blockChecker = backends.find(b => b.hasBlock)
       const repair = await repairTruncatedCar(
         job.root_cid,
         gatewayUrl || DEFAULT_GATEWAY,
         onProgress,
-        { spaceName: job.space_name }
+        { spaceName: job.space_name, hasBlock: blockChecker ? (cid) => blockChecker.hasBlock(cid) : undefined }
       )
       if (repair) {
         // Import the repair CAR (missing blocks only)
