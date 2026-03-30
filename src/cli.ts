@@ -46,7 +46,7 @@ async function _main(argv: string[]) {
     .option('--verify', 'Run verification only (skip export)')
     .option('--concurrency <n>', 'Parallel transfers', (v: string) => parseInt(v, 10), 3)
     .option('--dry-run', 'Enumerate only')
-    .option('--gateway <url>', 'Gateway URL', 'https://dag.w3s.link')
+    .option('--gateway <url>', 'Gateway URL', 'https://w3s.link')
     .option('--db <path>', 'SQLite database path', 'storacha-export.db')
     .option('--serve [host:port]', 'Start dashboard HTTP server')
     .option('--serve-password <pass>', 'Dashboard HTTP Basic Auth password')
