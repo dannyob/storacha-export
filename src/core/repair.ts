@@ -43,6 +43,7 @@ export async function repairUpload(
   let totalFetched = 0
   let failed = 0
   let repairBytes = 0
+  const startTime = Date.now()
 
   // Iterative repair: fetch missing blocks, decode dag-pb to discover more, repeat
   let pass = 0
@@ -102,7 +103,11 @@ export async function repairUpload(
       const progress = manifest.getProgress(rootCid)
       onProgress?.(progress.seen, progress.total, repairBytes)
       if ((i + BATCH_SIZE) % 50 < BATCH_SIZE) {
-        log('REPAIR', `  ${tag} ${progress.seen}/${progress.total} blocks seen (${progress.missing} remaining, +${totalFetched} this session)`)
+        const elapsed = (Date.now() - startTime) / 1000
+        const rate = totalFetched / elapsed
+        const etaSeconds = rate > 0 ? Math.round(progress.missing / rate) : 0
+        const etaStr = etaSeconds > 3600 ? `${(etaSeconds / 3600).toFixed(1)}h` : `${Math.round(etaSeconds / 60)}m`
+        log('REPAIR', `  ${tag} ${progress.seen}/${progress.total} blocks (${progress.missing} remaining, +${totalFetched} this session, ~${etaStr} left)`)
       }
 
       if (throttleMs > 0) await new Promise(r => setTimeout(r, throttleMs))
