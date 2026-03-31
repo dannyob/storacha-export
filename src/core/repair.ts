@@ -2,6 +2,7 @@ import * as dagPB from '@ipld/dag-pb'
 import type { BlockManifest } from './manifest.js'
 import type { Block } from './blocks.js'
 import { log } from '../util/log.js'
+import { formatEta } from '../util/format.js'
 
 export interface RepairResult {
   fetched: number
@@ -100,14 +101,13 @@ export async function repairUpload(
         consecutiveFailBatches = 0
       }
 
-      const progress = manifest.getProgress(rootCid)
-      onProgress?.(progress.seen, progress.total, repairBytes)
       if ((i + BATCH_SIZE) % 50 < BATCH_SIZE) {
+        const progress = manifest.getProgress(rootCid)
+        onProgress?.(progress.seen, progress.total, repairBytes)
         const elapsed = (Date.now() - startTime) / 1000
-        const rate = totalFetched / elapsed
-        const etaSeconds = rate > 0 ? Math.round(progress.missing / rate) : 0
-        const etaStr = etaSeconds > 3600 ? `${(etaSeconds / 3600).toFixed(1)}h` : `${Math.round(etaSeconds / 60)}m`
-        log('REPAIR', `  ${tag} ${progress.seen}/${progress.total} blocks (${progress.missing} remaining, +${totalFetched} this session, ~${etaStr} left)`)
+        const rate = totalFetched > 0 ? totalFetched / elapsed : 0
+        const eta = rate > 0 ? formatEta(Math.round(progress.missing / rate)) : ''
+        log('REPAIR', `  ${tag} ${progress.seen}/${progress.total} blocks (${progress.missing} remaining, +${totalFetched} this session${eta ? `, ~${eta} left` : ''})`)
       }
 
       if (throttleMs > 0) await new Promise(r => setTimeout(r, throttleMs))
