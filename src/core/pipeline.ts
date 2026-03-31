@@ -49,23 +49,37 @@ export async function exportUpload(options: ExportUploadOptions): Promise<void> 
     queue.setStatus(rootCid, backend.name, 'repairing')
     onProgress?.({ type: 'repairing', rootCid, totalBlocks: existingProgress.missing })
 
-    const result = await repairUpload(
-      rootCid,
-      manifest,
-      (cidStr) => fetcher.fetchBlock(cidStr),
-      {
-        onProgress: (fetched, total, bytes) => onProgress?.({ type: 'repair-progress', rootCid, fetched, total, bytes }),
-        onBlock: async (block) => { if (backend.putBlock) await backend.putBlock(block.cid.toString(), block.bytes) },
-        fetchSubCar: (cid) => fetcher.fetchCar(cid),
-      },
-    )
-
-    if (result && result.complete) {
-      if (await backend.hasContent(rootCid)) {
+    // If the backend has its own repair strategy (e.g. local reads truncated CAR from disk), use it
+    if (backend.repair) {
+      const ok = await backend.repair(rootCid, manifest, (cidStr) => fetcher.fetchBlock(cidStr))
+      if (ok && await backend.hasContent(rootCid)) {
         queue.markComplete(rootCid, backend.name, 0)
         onProgress?.({ type: 'done', rootCid, bytes: 0 })
-        log('REPAIR', `${tag} Repaired and verified`)
+        log('REPAIR', `${tag} Repaired and verified (backend repair)`)
         return
+      }
+    }
+
+    // Generic repair: fetch missing blocks individually
+    if (!backend.repair || !await backend.hasContent(rootCid)) {
+      const result = await repairUpload(
+        rootCid,
+        manifest,
+        (cidStr) => fetcher.fetchBlock(cidStr),
+        {
+          onProgress: (fetched, total, bytes) => onProgress?.({ type: 'repair-progress', rootCid, fetched, total, bytes }),
+          onBlock: backend.putBlock ? async (block) => { await backend.putBlock!(block.cid.toString(), block.bytes) } : undefined,
+          fetchSubCar: (cid) => fetcher.fetchCar(cid),
+        },
+      )
+
+      if (result && result.complete) {
+        if (await backend.hasContent(rootCid)) {
+          queue.markComplete(rootCid, backend.name, 0)
+          onProgress?.({ type: 'done', rootCid, bytes: 0 })
+          log('REPAIR', `${tag} Repaired and verified`)
+          return
+        }
       }
     }
 
@@ -215,23 +229,37 @@ export async function exportUpload(options: ExportUploadOptions): Promise<void> 
     queue.setStatus(rootCid, backend.name, 'repairing')
     onProgress?.({ type: 'repairing', rootCid, totalBlocks: progress.missing })
 
-    const result = await repairUpload(
-      rootCid,
-      manifest,
-      (cidStr) => fetcher.fetchBlock(cidStr),
-      {
-        onProgress: (fetched, total, bytes) => onProgress?.({ type: 'repair-progress', rootCid, fetched, total, bytes }),
-        onBlock: async (block) => { if (backend.putBlock) await backend.putBlock(block.cid.toString(), block.bytes) },
-        fetchSubCar: (cid) => fetcher.fetchCar(cid),
-      },
-    )
-
-    if (result && result.complete) {
-      if (await backend.hasContent(rootCid)) {
+    // Backend-specific repair (e.g. local rewrites truncated CAR)
+    if (backend.repair) {
+      const ok = await backend.repair(rootCid, manifest, (cidStr) => fetcher.fetchBlock(cidStr))
+      if (ok && await backend.hasContent(rootCid)) {
         queue.markComplete(rootCid, backend.name, 0)
         onProgress?.({ type: 'done', rootCid, bytes: 0 })
-        log('REPAIR', `${tag} Repaired and verified`)
+        log('REPAIR', `${tag} Repaired and verified (backend repair)`)
         return
+      }
+    }
+
+    // Generic repair
+    if (!backend.repair || !await backend.hasContent(rootCid)) {
+      const result = await repairUpload(
+        rootCid,
+        manifest,
+        (cidStr) => fetcher.fetchBlock(cidStr),
+        {
+          onProgress: (fetched, total, bytes) => onProgress?.({ type: 'repair-progress', rootCid, fetched, total, bytes }),
+          onBlock: backend.putBlock ? async (block) => { await backend.putBlock!(block.cid.toString(), block.bytes) } : undefined,
+          fetchSubCar: (cid) => fetcher.fetchCar(cid),
+        },
+      )
+
+      if (result && result.complete) {
+        if (await backend.hasContent(rootCid)) {
+          queue.markComplete(rootCid, backend.name, 0)
+          onProgress?.({ type: 'done', rootCid, bytes: 0 })
+          log('REPAIR', `${tag} Repaired and verified`)
+          return
+        }
       }
     }
   }
