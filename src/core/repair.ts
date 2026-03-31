@@ -66,7 +66,9 @@ export async function repairUpload(
   }
 
   // Phase 1: Fetch missing dag-pb nodes as sub-CARs (gets whole subtrees per request)
-  if (fetchSubCar) {
+  // Only worthwhile if there are raw leaf blocks — all-dag-pb DAGs yield 1 block per sub-CAR
+  const hasRawBlocks = missing.some(r => r.codec === 0x55)
+  if (fetchSubCar && hasRawBlocks) {
     const missingDagPB = missing.filter(r => r.codec === 0x70)
     if (missingDagPB.length > 0) {
       log('REPAIR', `[${tag}] Fetching ${missingDagPB.length} dag-pb nodes as sub-CARs`)
