@@ -68,7 +68,7 @@ export async function exportUpload(options: ExportUploadOptions): Promise<void> 
         (cidStr) => fetcher.fetchBlock(cidStr),
         {
           onProgress: (fetched, total, bytes) => onProgress?.({ type: 'repair-progress', rootCid, fetched, total, bytes }),
-          onBlock: backend.putBlock ? async (block) => { await backend.putBlock!(block.cid.toString(), block.bytes) } : undefined,
+          onBlock: backend.putBlock ? async (block) => { await backend.putBlock!(block.cid.toString(), block.bytes, rootCid) } : undefined,
           fetchSubCar: (cid) => fetcher.fetchCar(cid),
         },
       )
@@ -96,6 +96,9 @@ export async function exportUpload(options: ExportUploadOptions): Promise<void> 
     let cleanupStreams: (() => void) | undefined
 
     try {
+      // Wait for rate gate before fetching — coordinates with repair workers
+      await fetcher.waitForRateGate()
+
       const url = `${gatewayUrl.replace(/\/$/, '')}/ipfs/${rootCid}?format=car`
       const res = await fetch(url, {
         dispatcher: fetcher.dispatcher,
@@ -104,7 +107,11 @@ export async function exportUpload(options: ExportUploadOptions): Promise<void> 
 
       if (!res.ok) {
         await res.body?.cancel()
-        if (res.status === 429 || res.status >= 500) {
+        if (res.status === 429) {
+          fetcher.signalRateLimit(res.headers.get('retry-after'))
+          continue
+        }
+        if (res.status >= 500) {
           const delay = Math.min(1000 * Math.pow(2, attempt), 30000)
           onProgress?.({ type: 'retry', rootCid, attempt, delay, error: `HTTP ${res.status}` })
           await new Promise(r => setTimeout(r, delay))
@@ -248,7 +255,7 @@ export async function exportUpload(options: ExportUploadOptions): Promise<void> 
         (cidStr) => fetcher.fetchBlock(cidStr),
         {
           onProgress: (fetched, total, bytes) => onProgress?.({ type: 'repair-progress', rootCid, fetched, total, bytes }),
-          onBlock: backend.putBlock ? async (block) => { await backend.putBlock!(block.cid.toString(), block.bytes) } : undefined,
+          onBlock: backend.putBlock ? async (block) => { await backend.putBlock!(block.cid.toString(), block.bytes, rootCid) } : undefined,
           fetchSubCar: (cid) => fetcher.fetchCar(cid),
         },
       )
