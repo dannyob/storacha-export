@@ -72,6 +72,7 @@ export async function repairUpload(
       log('REPAIR', `[${tag}] Fetching ${missingDagPB.length} dag-pb nodes as sub-CARs`)
       let carsAttempted = 0
       let carsSucceeded = 0
+      let recentYields: number[] = []
 
       for (const row of missingDagPB) {
         if (manifest.isSeen(rootCid, row.block_cid)) continue
@@ -88,6 +89,9 @@ export async function repairUpload(
           }
           if (subBlocks > 0) {
             carsSucceeded++
+            recentYields.push(subBlocks)
+            if (recentYields.length > 10) recentYields.shift()
+
             const progress = manifest.getProgress(rootCid)
             onProgress?.(progress.seen, progress.total, repairBytes)
             const elapsed = (Date.now() - startTime) / 1000
@@ -97,6 +101,17 @@ export async function repairUpload(
           }
         } catch (err: any) {
           log('REPAIR', `[${tag}] sub-CAR ${row.block_cid.slice(0, 20)}... failed: ${err.message}`)
+          recentYields.push(0)
+          if (recentYields.length > 10) recentYields.shift()
+        }
+
+        // If recent sub-CARs are averaging ≤1 block, they're no better than individual fetches — bail
+        if (recentYields.length >= 10) {
+          const avg = recentYields.reduce((a, b) => a + b, 0) / recentYields.length
+          if (avg <= 1.5) {
+            log('REPAIR', `[${tag}] Sub-CARs averaging ${avg.toFixed(1)} blocks — switching to individual fetches`)
+            break
+          }
         }
 
         if (throttleMs > 0) await new Promise(r => setTimeout(r, throttleMs))
