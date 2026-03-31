@@ -14,7 +14,7 @@ const DEFAULT_URL = 'https://storacha.network/export.json'
 const DEFAULT_CHECK_INTERVAL = 300000 // 5 minutes
 
 let currentConfig: RemoteConfig = {}
-let checkInterval: ReturnType<typeof setInterval> | undefined
+let checkInterval: ReturnType<typeof setTimeout> | undefined
 let configUrl = DEFAULT_URL
 
 export function getRemoteConfig(): RemoteConfig {
@@ -41,27 +41,33 @@ export async function startRemoteConfig(url?: string): Promise<RemoteConfig> {
     log('INFO', `Remote: ${currentConfig.message}`)
   }
 
-  const interval = currentConfig.checkIntervalMs ?? DEFAULT_CHECK_INTERVAL
-  log('INFO', `Remote config: ${configUrl} (checking every ${Math.round(interval / 1000)}s)`)
+  const baseInterval = currentConfig.checkIntervalMs ?? DEFAULT_CHECK_INTERVAL
+  // Jitter ±20% to avoid thundering herd
+  const jitter = () => baseInterval + Math.round((Math.random() - 0.5) * baseInterval * 0.4)
+  log('INFO', `Remote config: ${configUrl} (checking every ~${Math.round(baseInterval / 1000)}s)`)
 
-  checkInterval = setInterval(async () => {
-    const prev = currentConfig
-    currentConfig = await fetchConfig()
+  const scheduleNext = () => {
+    checkInterval = setTimeout(async () => {
+      const prev = currentConfig
+      currentConfig = await fetchConfig()
 
-    if (currentConfig.message && currentConfig.message !== prev.message) {
-      log('INFO', `Remote: ${currentConfig.message}`)
-    }
-    if (currentConfig.pause && !prev.pause) {
-      log('INFO', 'Remote: pausing exports')
-    }
-    if (!currentConfig.pause && prev.pause) {
-      log('INFO', 'Remote: resuming exports')
-    }
-  }, interval)
+      if (currentConfig.message && currentConfig.message !== prev.message) {
+        log('INFO', `Remote: ${currentConfig.message}`)
+      }
+      if (currentConfig.pause && !prev.pause) {
+        log('INFO', 'Remote: pausing exports')
+      }
+      if (!currentConfig.pause && prev.pause) {
+        log('INFO', 'Remote: resuming exports')
+      }
+      scheduleNext()
+    }, jitter())
+  }
+  scheduleNext()
 
   return currentConfig
 }
 
 export function stopRemoteConfig(): void {
-  if (checkInterval) clearInterval(checkInterval)
+  if (checkInterval) clearTimeout(checkInterval)
 }
