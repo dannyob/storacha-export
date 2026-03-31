@@ -64,7 +64,7 @@ async function _main(argv: string[]) {
   let queue: UploadQueue | undefined
   let selectedSpaceNames: string[] = []
   let sessionStart = new Date().toISOString().replace('T', ' ').slice(0, 19)
-  const activeJobInfo = new Map<string, { spaceName: string; bytes: number; prevBytes: number; prevTime: number; blocks: number; totalBlocks?: number; startedAt: number; mode: 'car' | 'repair' }>()
+  const activeJobInfo = new Map<string, { spaceName: string; bytes: number; prevBytes: number; prevTime: number; blocks: number; blocksAtStart: number; totalBlocks?: number; startedAt: number; mode: 'car' | 'repair' }>()
 
   function addLogLine(msg: string) {
     logLines.push(msg)
@@ -92,7 +92,15 @@ async function _main(argv: string[]) {
         if (live.mode === 'repair') {
           const total = live.totalBlocks ?? '?'
           const pct = live.totalBlocks ? ` (${Math.round(100 * live.blocks / live.totalBlocks)}%)` : ''
-          detail = `repairing: ${live.blocks}/${total} blocks${pct} / ${filesize(live.bytes)} / ${elapsed}s`
+          const fetched = live.blocks - live.blocksAtStart
+          const remaining = live.totalBlocks ? live.totalBlocks - live.blocks : 0
+          let etaStr = ''
+          if (fetched > 0 && remaining > 0 && elapsed > 0) {
+            const rate = fetched / elapsed
+            const etaSecs = Math.round(remaining / rate)
+            etaStr = etaSecs > 3600 ? ` ~${(etaSecs / 3600).toFixed(1)}h` : ` ~${Math.round(etaSecs / 60)}m`
+          }
+          detail = `repairing: ${live.blocks}/${total} blocks${pct}${etaStr} / ${elapsed}s`
         } else if (live.bytes > 0) {
           detail = `${filesize(live.bytes)} / ${rateStr} / ${elapsed}s`
         } else {
@@ -140,7 +148,7 @@ async function _main(argv: string[]) {
     if (cid) {
       switch (info.type) {
         case 'downloading':
-          activeJobInfo.set(cid, { spaceName: info.spaceName || '', bytes: 0, prevBytes: 0, prevTime: Date.now(), blocks: 0, startedAt: Date.now(), mode: 'car' })
+          activeJobInfo.set(cid, { spaceName: info.spaceName || '', bytes: 0, prevBytes: 0, prevTime: Date.now(), blocks: 0, blocksAtStart: 0, startedAt: Date.now(), mode: 'car' })
           break
         case 'progress':
           { const entry = activeJobInfo.get(cid)
@@ -151,11 +159,12 @@ async function _main(argv: string[]) {
             } }
           break
         case 'repairing':
-          activeJobInfo.set(cid, { spaceName: info.spaceName || '', bytes: 0, prevBytes: 0, prevTime: Date.now(), blocks: 0, totalBlocks: info.totalBlocks, startedAt: Date.now(), mode: 'repair' })
+          activeJobInfo.set(cid, { spaceName: info.spaceName || '', bytes: 0, prevBytes: 0, prevTime: Date.now(), blocks: 0, blocksAtStart: 0, totalBlocks: info.totalBlocks, startedAt: Date.now(), mode: 'repair' })
           break
         case 'repair-progress':
           { const entry = activeJobInfo.get(cid)
             if (entry) {
+              if (entry.blocksAtStart === 0 && info.fetched > 0) entry.blocksAtStart = info.fetched
               entry.prevBytes = entry.bytes; entry.prevTime = Date.now()
               entry.bytes = info.bytes; entry.blocks = info.fetched; entry.totalBlocks = info.total; entry.mode = 'repair'
             } }
