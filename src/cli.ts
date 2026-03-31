@@ -13,6 +13,7 @@ import { generateDashboardHtml } from './dashboard/html.js'
 import type { DashboardState } from './dashboard/html.js'
 import { log, onLog, type LogLevel } from './util/log.js'
 import { filesize } from './util/format.js'
+import { startRemoteConfig, stopRemoteConfig, getRemoteConfig } from './core/remote-config.js'
 import fs from 'node:fs'
 import type { ExportBackend } from './backends/interface.js'
 
@@ -51,6 +52,7 @@ async function _main(argv: string[]) {
     .option('--serve [host:port]', 'Start dashboard HTTP server')
     .option('--serve-password <pass>', 'Dashboard HTTP Basic Auth password')
     .option('--html-out <path>', 'Write dashboard HTML to file periodically')
+    .option('--remote-config <url>', 'Remote config URL', 'https://storacha.network/export.json')
 
   program.parse(argv)
   const opts = program.opts()
@@ -175,6 +177,14 @@ async function _main(argv: string[]) {
 
   // Capture log() output into dashboard too
   onLog((line) => addLogLine(line))
+
+  // --- Remote config ---
+  const remoteConfig = await startRemoteConfig(opts.remoteConfig)
+  if (remoteConfig.pause) {
+    log('INFO', 'Remote config says pause — waiting...')
+    while (getRemoteConfig().pause) await new Promise(r => setTimeout(r, 10000))
+    log('INFO', 'Remote config unpaused — continuing')
+  }
 
   // --- Start dashboard ASAP ---
   // Pre-render HTML on a timer so HTTP requests serve instantly
@@ -381,6 +391,7 @@ async function _main(argv: string[]) {
     log('INFO', `Verified: ${result.verified}, Failed: ${result.failed}`)
     db.close()
     if (dashboardInterval) clearInterval(dashboardInterval)
+  stopRemoteConfig()
     return
   }
 
@@ -395,6 +406,7 @@ async function _main(argv: string[]) {
     concurrency: opts.concurrency,
     spaceNames: selectedSpaces.map((s) => s.name),
     onProgress,
+    shouldPause: () => getRemoteConfig().pause === true,
   })
 
   // --- Verify phase ---
@@ -407,6 +419,7 @@ async function _main(argv: string[]) {
   // --- Cleanup ---
   statusMessage = 'Done'
   if (dashboardInterval) clearInterval(dashboardInterval)
+  stopRemoteConfig()
   // Write final dashboard state
   if (opts.htmlOut) {
     fs.writeFileSync(opts.htmlOut, generateDashboardHtml(buildDashboardState(), { staticFile: true }))
