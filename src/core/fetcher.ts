@@ -16,8 +16,46 @@ const blockDispatcher = new Agent({
   connections: 10,       // separate pool from CAR downloads
 })
 
+/**
+ * Shared gate that pauses ALL block fetches when the gateway says 429.
+ * All workers check this before making a request.
+ */
+class RateLimitGate {
+  private _blockedUntil = 0
+  private _waitPromise: Promise<void> | null = null
+  private _waitResolve: (() => void) | null = null
+
+  /** Called when a 429 is received. All workers will pause. */
+  backoff(seconds: number) {
+    const until = Date.now() + seconds * 1000
+    if (until <= this._blockedUntil) return // already waiting longer
+    this._blockedUntil = until
+    log('INFO', `Rate limited — all block fetches paused for ${seconds}s`)
+    if (!this._waitPromise) {
+      this._waitPromise = new Promise(r => { this._waitResolve = r })
+      setTimeout(() => {
+        this._blockedUntil = 0
+        this._waitPromise = null
+        this._waitResolve?.()
+        this._waitResolve = null
+        log('INFO', `Rate limit cleared — resuming block fetches`)
+      }, seconds * 1000)
+    }
+  }
+
+  /** Wait if currently rate-limited. Returns immediately if not. */
+  async wait(): Promise<void> {
+    if (this._waitPromise) await this._waitPromise
+  }
+
+  get isBlocked(): boolean {
+    return Date.now() < this._blockedUntil
+  }
+}
+
 export class GatewayFetcher {
   readonly dispatcher = carDispatcher
+  private rateGate = new RateLimitGate()
   constructor(private gatewayUrl: string) {}
 
   /**
@@ -43,6 +81,9 @@ export class GatewayFetcher {
     const url = `${this.gatewayUrl.replace(/\/$/, '')}/ipfs/${cidStr}?format=raw`
 
     for (let attempt = 0; attempt < 3; attempt++) {
+      // Wait if the gateway has told us to back off
+      await this.rateGate.wait()
+
       const controller = new AbortController()
       let timer: ReturnType<typeof setTimeout> | undefined
 
@@ -56,9 +97,17 @@ export class GatewayFetcher {
 
         if (timer) { clearTimeout(timer); timer = undefined }
 
-        if (res.status === 429 || res.status >= 500) {
+        if (res.status === 429) {
           const retryAfter = res.headers.get('retry-after')
-          const delay = retryAfter ? parseInt(retryAfter, 10) * 1000 : Math.min(2000 * Math.pow(2, attempt), 30000)
+          const seconds = retryAfter ? parseInt(retryAfter, 10) : 60
+          await res.body?.cancel()
+          // Signal ALL workers to pause, not just this one
+          this.rateGate.backoff(seconds + Math.floor(Math.random() * 5)) // jitter to avoid thundering herd
+          continue
+        }
+
+        if (res.status >= 500) {
+          const delay = Math.min(2000 * Math.pow(2, attempt), 30000)
           await res.body?.cancel()
           log('RETRY', `Block ${cidStr.slice(0, 20)}... HTTP ${res.status}, waiting ${Math.round(delay / 1000)}s`)
           await new Promise(r => setTimeout(r, delay))
