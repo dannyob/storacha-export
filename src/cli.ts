@@ -45,7 +45,6 @@ async function _main(argv: string[]) {
     .option('--fresh', 'Start over, discarding previous progress tracking')
     .option('--verify', 'Run verification only (skip export)')
     .option('--concurrency <n>', 'Parallel transfers', (v: string) => parseInt(v, 10), 3)
-    .option('--dry-run', 'Enumerate only')
     .option('--gateway <url>', 'Gateway URL', 'https://w3s.link')
     .option('--db <path>', 'SQLite database path', 'storacha-export.db')
     .option('--serve [host:port]', 'Start dashboard HTTP server')
@@ -270,9 +269,21 @@ async function _main(argv: string[]) {
   } else {
     const backendName = await select({
       message: 'Select a backend:',
-      choices: [{ name: 'kubo (local IPFS node)', value: 'kubo' }],
+      choices: [
+        { name: 'kubo — local IPFS node (dag/import)', value: 'kubo' },
+        { name: 'local — save CAR files to disk', value: 'local' },
+        { name: 'cluster — IPFS Cluster API', value: 'cluster' },
+      ],
     })
-    backends = [createBackend(backendName, { apiUrl: 'http://127.0.0.1:5001' })]
+    let config: Record<string, any> = {}
+    if (backendName === 'kubo') {
+      config = { apiUrl: await input({ message: 'Kubo API URL:', default: 'http://127.0.0.1:5001' }) }
+    } else if (backendName === 'local') {
+      config = { outputDir: await input({ message: 'Output directory:', default: './export' }) }
+    } else if (backendName === 'cluster') {
+      config = { apiUrl: await input({ message: 'Cluster API URL:', default: 'http://127.0.0.1:9094' }) }
+    }
+    backends = [createBackend(backendName, config)]
   }
 
   // Init backends
