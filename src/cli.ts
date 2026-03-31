@@ -183,7 +183,9 @@ async function _main(argv: string[]) {
   if (remoteConfig.pause) {
     log('INFO', 'Remote config says pause — waiting...')
     while (getRemoteConfig().pause) await new Promise(r => setTimeout(r, 10000))
-    log('INFO', 'Remote config unpaused — continuing')
+    const resumeDelay = Math.round(Math.random() * 30000)
+    log('INFO', `Remote config unpaused — resuming in ${Math.round(resumeDelay / 1000)}s`)
+    await new Promise(r => setTimeout(r, resumeDelay))
   }
 
   // --- Start dashboard ASAP ---
