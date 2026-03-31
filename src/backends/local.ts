@@ -10,6 +10,11 @@ import { log } from '../util/log.js'
 export class LocalBackend implements ExportBackend {
   name = 'local' as const
 
+  private repairWriters = new Map<string, {
+    writer: ReturnType<typeof CarWriter.create>['writer']
+    drainPromise: Promise<void>
+  }>()
+
   constructor(private options: { outputDir: string }) {}
 
   get outputDir() { return this.options.outputDir }
@@ -151,6 +156,39 @@ export class LocalBackend implements ExportBackend {
     fs.renameSync(tempPath, filePath)
     log('REPAIR', `[local] Wrote complete CAR: ${existingBlocks.length + fetchedBlocks.length} blocks`)
     return true
+  }
+
+  async putBlock(cid: string, bytes: Uint8Array, rootCid?: string): Promise<void> {
+    if (!rootCid) throw new Error('putBlock requires rootCid for local backend')
+
+    if (!this.repairWriters.has(rootCid)) {
+      const repairPath = this.carPath(rootCid) + '.repair'
+      fs.mkdirSync(this.outputDir, { recursive: true })
+      const rootCidObj = CID.parse(rootCid)
+      const { writer, out } = CarWriter.create([rootCidObj])
+      const fileStream = fs.createWriteStream(repairPath)
+      const drainPromise = (async () => {
+        for await (const chunk of out) fileStream.write(chunk)
+        fileStream.end()
+        await new Promise<void>((resolve, reject) => {
+          fileStream.on('finish', resolve)
+          fileStream.on('error', reject)
+        })
+      })()
+      this.repairWriters.set(rootCid, { writer, drainPromise })
+    }
+
+    const { writer } = this.repairWriters.get(rootCid)!
+    const cidObj = CID.parse(cid)
+    await writer.put({ cid: cidObj, bytes })
+  }
+
+  async closeRepairWriter(rootCid: string): Promise<void> {
+    const entry = this.repairWriters.get(rootCid)
+    if (!entry) return
+    await entry.writer.close()
+    await entry.drainPromise
+    this.repairWriters.delete(rootCid)
   }
 
   private carPath(rootCid: string): string {

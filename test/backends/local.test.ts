@@ -66,6 +66,53 @@ describe('LocalBackend', () => {
     const result = await backend.verifyDag!(root.cid.toString())
     expect(result.valid).toBe(true)
   })
+
+  it('putBlock writes a block to a .car.repair sidecar', async () => {
+    const leaf = await makeRawBlock('put-test')
+    const root = await makeDagPBNode([leaf])
+    const rootCid = root.cid.toString()
+
+    async function* rootBlocks(): AsyncIterable<Block> { yield root }
+    await backend.importCar(rootCid, rootBlocks())
+
+    await backend.putBlock!(leaf.cid.toString(), leaf.bytes, rootCid)
+    await backend.closeRepairWriter(rootCid)
+
+    const repairPath = path.join(tmpDir, `${rootCid}.car.repair`)
+    expect(fs.existsSync(repairPath)).toBe(true)
+
+    const data = fs.readFileSync(repairPath)
+    const iter = await CarBlockIterator.fromIterable(
+      (async function* () { yield new Uint8Array(data) })()
+    )
+    const repairBlocks: any[] = []
+    for await (const b of iter) repairBlocks.push(b)
+    expect(repairBlocks).toHaveLength(1)
+    expect(repairBlocks[0].cid.toString()).toBe(leaf.cid.toString())
+  })
+
+  it('putBlock appends multiple blocks to the same sidecar', async () => {
+    const leaf1 = await makeRawBlock('multi-1')
+    const leaf2 = await makeRawBlock('multi-2')
+    const root = await makeDagPBNode([leaf1, leaf2])
+    const rootCid = root.cid.toString()
+
+    async function* rootBlocks(): AsyncIterable<Block> { yield root }
+    await backend.importCar(rootCid, rootBlocks())
+
+    await backend.putBlock!(leaf1.cid.toString(), leaf1.bytes, rootCid)
+    await backend.putBlock!(leaf2.cid.toString(), leaf2.bytes, rootCid)
+    await backend.closeRepairWriter(rootCid)
+
+    const repairPath = path.join(tmpDir, `${rootCid}.car.repair`)
+    const data = fs.readFileSync(repairPath)
+    const iter = await CarBlockIterator.fromIterable(
+      (async function* () { yield new Uint8Array(data) })()
+    )
+    const repairBlocks: any[] = []
+    for await (const b of iter) repairBlocks.push(b)
+    expect(repairBlocks).toHaveLength(2)
+  })
 })
 
 describe('LocalBackend repair', () => {
