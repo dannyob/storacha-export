@@ -17,39 +17,48 @@ const blockDispatcher = new Agent({
 })
 
 /**
- * Shared gate that pauses ALL block fetches when the gateway says 429.
- * All workers check this before making a request.
+ * Shared gate that pauses ALL fetches (blocks AND CARs) when the gateway says 429.
+ * Only logs once per backoff period.
  */
 class RateLimitGate {
-  private _blockedUntil = 0
-  private _waitPromise: Promise<void> | null = null
-  private _waitResolve: (() => void) | null = null
+  private _resumeAt = 0
+  private _waiters: Array<() => void> = []
+  private _timer: ReturnType<typeof setTimeout> | null = null
 
-  /** Called when a 429 is received. All workers will pause. */
+  /** Called when a 429 is received. All waiters will pause. */
   backoff(seconds: number) {
-    const until = Date.now() + seconds * 1000
-    if (until <= this._blockedUntil) return // already waiting longer
-    this._blockedUntil = until
-    log('INFO', `Rate limited — all block fetches paused for ${seconds}s`)
-    if (!this._waitPromise) {
-      this._waitPromise = new Promise(r => { this._waitResolve = r })
-      setTimeout(() => {
-        this._blockedUntil = 0
-        this._waitPromise = null
-        this._waitResolve?.()
-        this._waitResolve = null
-        log('INFO', `Rate limit cleared — resuming block fetches`)
-      }, seconds * 1000)
+    const resumeAt = Date.now() + seconds * 1000
+    if (resumeAt <= this._resumeAt) return // already waiting longer — don't log again
+
+    const wasBlocked = this._resumeAt > Date.now()
+    this._resumeAt = resumeAt
+
+    if (!wasBlocked) {
+      // Only log on the first 429 in a burst
+      log('INFO', `Rate limited — all fetches paused for ${seconds}s`)
     }
+
+    // Reset or set the timer
+    if (this._timer) clearTimeout(this._timer)
+    this._timer = setTimeout(() => {
+      this._resumeAt = 0
+      this._timer = null
+      log('INFO', `Rate limit cleared — resuming fetches`)
+      // Wake all waiters
+      const waiters = this._waiters.splice(0)
+      for (const resolve of waiters) resolve()
+    }, seconds * 1000)
   }
 
   /** Wait if currently rate-limited. Returns immediately if not. */
   async wait(): Promise<void> {
-    if (this._waitPromise) await this._waitPromise
+    if (Date.now() < this._resumeAt) {
+      await new Promise<void>(resolve => this._waiters.push(resolve))
+    }
   }
 
   get isBlocked(): boolean {
-    return Date.now() < this._blockedUntil
+    return Date.now() < this._resumeAt
   }
 }
 
@@ -60,10 +69,21 @@ export class GatewayFetcher {
 
   /**
    * Fetch a CAR for a root CID and return it as a BlockStream.
+   * Respects rate limiting.
    */
   async fetchCar(rootCid: string): Promise<BlockStream> {
+    await this.rateGate.wait()
+
     const url = `${this.gatewayUrl.replace(/\/$/, '')}/ipfs/${rootCid}?format=car`
     const res = await fetch(url, { dispatcher: carDispatcher } as any)
+
+    if (res.status === 429) {
+      const retryAfter = res.headers.get('retry-after')
+      const seconds = retryAfter ? parseInt(retryAfter, 10) : 60
+      await res.body?.cancel()
+      this.rateGate.backoff(seconds)
+      throw new Error(`Gateway returned 429: Too Many Requests`)
+    }
 
     if (!res.ok) {
       await res.body?.cancel()
@@ -101,8 +121,7 @@ export class GatewayFetcher {
           const retryAfter = res.headers.get('retry-after')
           const seconds = retryAfter ? parseInt(retryAfter, 10) : 60
           await res.body?.cancel()
-          // Signal ALL workers to pause, not just this one
-          this.rateGate.backoff(seconds + Math.floor(Math.random() * 5)) // jitter to avoid thundering herd
+          this.rateGate.backoff(seconds + Math.floor(Math.random() * 5))
           continue
         }
 
