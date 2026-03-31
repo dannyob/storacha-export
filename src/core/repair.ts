@@ -28,7 +28,7 @@ export async function repairUpload(
   fetchBlock: (cidStr: string) => Promise<Block>,
   options: RepairOptions = {},
 ): Promise<RepairResult | null> {
-  const { onProgress, onBlock, throttleMs = 200, batchSize = 10 } = options
+  const { onProgress, onBlock, throttleMs = 1000, batchSize = 5 } = options
   const tag = rootCid.slice(0, 24) + '...'
 
   let missing = manifest.getMissing(rootCid)
