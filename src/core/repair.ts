@@ -84,10 +84,10 @@ export async function repairUpload(
             }
           }
           if (subBlocks > 0) {
-            log('REPAIR', `  ${tag} sub-CAR ${row.block_cid.slice(0, 20)}... yielded ${subBlocks} blocks`)
+            log('REPAIR', `[${tag}] sub-CAR ${row.block_cid.slice(0, 20)}... yielded ${subBlocks} blocks`)
           }
         } catch (err: any) {
-          log('REPAIR', `  ${tag} sub-CAR ${row.block_cid.slice(0, 20)}... failed: ${err.message}`)
+          log('REPAIR', `[${tag}] sub-CAR ${row.block_cid.slice(0, 20)}... failed: ${err.message}`)
         }
 
         if (throttleMs > 0) await new Promise(r => setTimeout(r, throttleMs))
