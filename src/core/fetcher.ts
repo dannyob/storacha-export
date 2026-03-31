@@ -44,42 +44,44 @@ export class GatewayFetcher {
 
     for (let attempt = 0; attempt < 3; attempt++) {
       const controller = new AbortController()
-
       let timer: ReturnType<typeof setTimeout> | undefined
+
       try {
-        const block = await Promise.race([
-          (async (): Promise<Block> => {
-            const res = await fetch(url, { dispatcher: blockDispatcher, signal: controller.signal } as any)
-
-            if (res.status === 429 || res.status >= 500) {
-              const retryAfter = res.headers.get('retry-after')
-              const delay = retryAfter ? parseInt(retryAfter, 10) * 1000 : Math.min(2000 * Math.pow(2, attempt), 30000)
-              await res.body?.cancel()
-              await new Promise(r => setTimeout(r, delay))
-              throw new Error(`HTTP ${res.status} (retrying)`)
-            }
-
-            if (!res.ok) {
-              throw new Error(`Block fetch failed: HTTP ${res.status}`)
-            }
-
-            const bytes = new Uint8Array(await res.arrayBuffer())
-            const expectedCid = CID.parse(cidStr)
-            const hash = await sha256.digest(bytes)
-
-            if (!expectedCid.multihash.bytes.every((b, i) => b === hash.bytes[i])) {
-              throw new Error(`Hash mismatch for ${cidStr}`)
-            }
-
-            return { cid: expectedCid, bytes }
-          })(),
+        const res = await Promise.race([
+          fetch(url, { dispatcher: blockDispatcher, signal: controller.signal } as any),
           new Promise<never>((_, reject) => {
             timer = setTimeout(() => { controller.abort(); reject(new Error('Block fetch timeout (30s)')) }, 30000)
           }),
         ])
-        return block
+
+        if (timer) { clearTimeout(timer); timer = undefined }
+
+        if (res.status === 429 || res.status >= 500) {
+          const retryAfter = res.headers.get('retry-after')
+          const delay = retryAfter ? parseInt(retryAfter, 10) * 1000 : Math.min(2000 * Math.pow(2, attempt), 30000)
+          await res.body?.cancel()
+          log('RETRY', `Block ${cidStr.slice(0, 20)}... HTTP ${res.status}, waiting ${Math.round(delay / 1000)}s`)
+          await new Promise(r => setTimeout(r, delay))
+          continue
+        }
+
+        if (!res.ok) {
+          throw new Error(`Block fetch failed: HTTP ${res.status}`)
+        }
+
+        const bytes = new Uint8Array(await res.arrayBuffer())
+        const expectedCid = CID.parse(cidStr)
+        const hash = await sha256.digest(bytes)
+
+        if (!expectedCid.multihash.bytes.every((b, i) => b === hash.bytes[i])) {
+          throw new Error(`Hash mismatch for ${cidStr}`)
+        }
+
+        return { cid: expectedCid, bytes }
       } catch (err: any) {
-        if (attempt === 2 || !err.message.includes('retrying')) throw err
+        if (attempt === 2) throw err
+        if (!err.message.includes('timeout')) throw err
+        // Timeout — retry
       } finally {
         if (timer) clearTimeout(timer)
       }
