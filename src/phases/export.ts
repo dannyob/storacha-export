@@ -12,11 +12,10 @@ export interface ExportOptions {
   concurrency?: number
   spaceNames?: string[]
   onProgress?: (info: { type: string; [key: string]: any }) => void
-  shouldPause?: () => boolean
 }
 
 export async function runExport(options: ExportOptions): Promise<void> {
-  const { queue, manifest, backends, gatewayUrl, concurrency = 1, spaceNames, onProgress, shouldPause } = options
+  const { queue, manifest, backends, gatewayUrl, concurrency = 1, spaceNames, onProgress } = options
 
   for (const backend of backends) {
     const pending = spaceNames
@@ -40,7 +39,6 @@ export async function runExport(options: ExportOptions): Promise<void> {
           manifest,
           gatewayUrl,
           onProgress: onProgress && ((info) => onProgress({ ...info, spaceName: upload.space_name })),
-          shouldPause,
         })
       }
     }

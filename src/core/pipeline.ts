@@ -16,7 +16,6 @@ export interface ExportUploadOptions {
   gatewayUrl: string
   maxRetries?: number
   uploadTimeout?: number
-  shouldPause?: () => boolean
   onProgress?: (info: { type: string; [key: string]: any }) => void
 }
 
@@ -31,7 +30,7 @@ function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise
 }
 
 export async function exportUpload(options: ExportUploadOptions): Promise<void> {
-  const { rootCid, backend, queue, manifest, gatewayUrl, maxRetries = 3, uploadTimeout = 300000, onProgress, shouldPause } = options
+  const { rootCid, backend, queue, manifest, gatewayUrl, maxRetries = 3, uploadTimeout = 300000, onProgress } = options
   const tag = `[${rootCid.slice(0, 24)}...]`
   const fetcher = new GatewayFetcher(gatewayUrl)
 
@@ -57,7 +56,6 @@ export async function exportUpload(options: ExportUploadOptions): Promise<void> 
       {
         onProgress: (fetched, total, bytes) => onProgress?.({ type: 'repair-progress', rootCid, fetched, total, bytes }),
         onBlock: async (block) => { if (backend.putBlock) await backend.putBlock(block.cid.toString(), block.bytes) },
-        shouldPause,
       },
     )
 
@@ -223,7 +221,6 @@ export async function exportUpload(options: ExportUploadOptions): Promise<void> 
       {
         onProgress: (fetched, total, bytes) => onProgress?.({ type: 'repair-progress', rootCid, fetched, total, bytes }),
         onBlock: async (block) => { if (backend.putBlock) await backend.putBlock(block.cid.toString(), block.bytes) },
-        shouldPause,
       },
     )
 

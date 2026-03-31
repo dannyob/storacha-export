@@ -14,7 +14,6 @@ export interface RepairOptions {
   onBlock?: (block: Block) => Promise<void>
   throttleMs?: number
   batchSize?: number
-  shouldPause?: () => boolean
 }
 
 /**
@@ -29,7 +28,7 @@ export async function repairUpload(
   fetchBlock: (cidStr: string) => Promise<Block>,
   options: RepairOptions = {},
 ): Promise<RepairResult | null> {
-  const { onProgress, onBlock, throttleMs = 200, batchSize = 10, shouldPause } = options
+  const { onProgress, onBlock, throttleMs = 200, batchSize = 10 } = options
   const tag = rootCid.slice(0, 24) + '...'
 
   let missing = manifest.getMissing(rootCid)
@@ -107,16 +106,6 @@ export async function repairUpload(
       }
 
       if (throttleMs > 0) await new Promise(r => setTimeout(r, throttleMs))
-
-      // Check for remote pause
-      if (shouldPause?.()) {
-        log('REPAIR', `  ${tag} paused by remote config`)
-        while (shouldPause()) await new Promise(r => setTimeout(r, 10000))
-        // Random delay 0-30s on resume to avoid thundering herd
-        const resumeDelay = Math.round(Math.random() * 30000)
-        log('REPAIR', `  ${tag} resuming in ${Math.round(resumeDelay / 1000)}s`)
-        await new Promise(r => setTimeout(r, resumeDelay))
-      }
     }
 
     // Check if decoding dag-pb blocks revealed more missing blocks
