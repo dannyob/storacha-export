@@ -49,36 +49,46 @@ export async function repairUpload(
     if (pass > 1) log('REPAIR', `[${tag}] Pass ${pass}: ${missing.length} more missing blocks`)
 
     let progressThisPass = false
+    const BATCH_SIZE = 5
 
-    for (const row of missing) {
-      try {
-        if (totalFetched === 0) log('REPAIR', `  ${tag} fetching block 1: ${row.block_cid.slice(0, 20)}...`)
+    for (let i = 0; i < missing.length; i += BATCH_SIZE) {
+      const batch = missing.slice(i, i + BATCH_SIZE)
+
+      const results = await Promise.allSettled(batch.map(async (row) => {
         const block = await fetchBlock(row.block_cid)
-        totalFetched++
-        progressThisPass = true
-        repairBytes += block.bytes.length
-        manifest.markSeen(rootCid, row.block_cid, row.codec)
+        return { block, row }
+      }))
 
-        // Push block to backend immediately — don't accumulate in memory
-        if (onBlock) await onBlock(block)
+      for (const [j, result] of results.entries()) {
+        if (result.status === 'fulfilled') {
+          const { block, row } = result.value
+          totalFetched++
+          progressThisPass = true
+          repairBytes += block.bytes.length
+          manifest.markSeen(rootCid, row.block_cid, row.codec)
 
-        // If it's a dag-pb node, extract links to discover more blocks
-        if (block.cid.code === 0x70) {
-          try {
-            const node = dagPB.decode(block.bytes)
-            for (const link of node.Links) {
-              manifest.addLink(rootCid, link.Hash.toString(), link.Hash.code, block.cid.toString())
-            }
-          } catch {}
+          if (onBlock) await onBlock(block)
+
+          if (block.cid.code === 0x70) {
+            try {
+              const node = dagPB.decode(block.bytes)
+              for (const link of node.Links) {
+                manifest.addLink(rootCid, link.Hash.toString(), link.Hash.code, block.cid.toString())
+              }
+            } catch {}
+          }
+        } else {
+          log('REPAIR', `  FAIL ${batch[j].block_cid.slice(0, 24)}...: ${result.reason?.message}`)
+          failed++
         }
-
-        const totalMissing = manifest.getProgress(rootCid).missing
-        onProgress?.(totalFetched, totalFetched + totalMissing, repairBytes)
-        log('REPAIR', `  ${tag} ${totalFetched} fetched (${totalMissing} remaining) ${row.block_cid.slice(0, 20)}... ${block.bytes.length} bytes`)
-      } catch (err: any) {
-        log('REPAIR', `  FAIL ${row.block_cid.slice(0, 24)}...: ${err.message}`)
-        failed++
       }
+
+      const totalMissing = manifest.getProgress(rootCid).missing
+      onProgress?.(totalFetched, totalFetched + totalMissing, repairBytes)
+      if ((i + BATCH_SIZE) % 50 < BATCH_SIZE) {
+        log('REPAIR', `  ${tag} ${totalFetched} fetched (${totalMissing} remaining)`)
+      }
+
       if (throttleMs > 0) await new Promise(r => setTimeout(r, throttleMs))
     }
 
