@@ -36,7 +36,8 @@ export async function repairUpload(
     return null
   }
 
-  log('REPAIR', `[${tag}] ${missing.length} missing blocks — fetching`)
+  const initialProgress = manifest.getProgress(rootCid)
+  log('REPAIR', `[${tag}] ${initialProgress.seen}/${initialProgress.total} seen, ${missing.length} missing — fetching`)
 
   let totalFetched = 0
   let failed = 0
@@ -83,10 +84,10 @@ export async function repairUpload(
         }
       }
 
-      const totalMissing = manifest.getProgress(rootCid).missing
-      onProgress?.(totalFetched, totalFetched + totalMissing, repairBytes)
+      const progress = manifest.getProgress(rootCid)
+      onProgress?.(totalFetched, totalFetched + progress.missing, repairBytes)
       if ((i + BATCH_SIZE) % 50 < BATCH_SIZE) {
-        log('REPAIR', `  ${tag} ${totalFetched} fetched (${totalMissing} remaining)`)
+        log('REPAIR', `  ${tag} ${progress.seen}/${progress.total} blocks seen (${progress.missing} remaining, +${totalFetched} this session)`)
       }
 
       if (throttleMs > 0) await new Promise(r => setTimeout(r, throttleMs))
