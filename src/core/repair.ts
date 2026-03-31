@@ -13,6 +13,7 @@ export interface RepairOptions {
   onProgress?: (fetched: number, total: number, bytes: number) => void
   onBlock?: (block: Block) => Promise<void>
   throttleMs?: number
+  batchSize?: number
 }
 
 /**
@@ -27,7 +28,7 @@ export async function repairUpload(
   fetchBlock: (cidStr: string) => Promise<Block>,
   options: RepairOptions = {},
 ): Promise<RepairResult | null> {
-  const { onProgress, onBlock, throttleMs = 1000 } = options
+  const { onProgress, onBlock, throttleMs = 200, batchSize = 10 } = options
   const tag = rootCid.slice(0, 24) + '...'
 
   let missing = manifest.getMissing(rootCid)
@@ -50,7 +51,7 @@ export async function repairUpload(
     if (pass > 1) log('REPAIR', `[${tag}] Pass ${pass}: ${missing.length} more missing blocks`)
 
     let progressThisPass = false
-    const BATCH_SIZE = 3
+    const BATCH_SIZE = batchSize
     let consecutiveFailBatches = 0
 
     for (let i = 0; i < missing.length; i += BATCH_SIZE) {
