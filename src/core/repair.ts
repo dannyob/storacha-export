@@ -70,9 +70,12 @@ export async function repairUpload(
     const missingDagPB = missing.filter(r => r.codec === 0x70)
     if (missingDagPB.length > 0) {
       log('REPAIR', `[${tag}] Fetching ${missingDagPB.length} dag-pb nodes as sub-CARs`)
+      let carsAttempted = 0
+      let carsSucceeded = 0
 
       for (const row of missingDagPB) {
         if (manifest.isSeen(rootCid, row.block_cid)) continue
+        carsAttempted++
 
         try {
           const stream = await fetchSubCar(row.block_cid)
@@ -84,7 +87,13 @@ export async function repairUpload(
             }
           }
           if (subBlocks > 0) {
-            log('REPAIR', `[${tag}] sub-CAR ${row.block_cid.slice(0, 20)}... yielded ${subBlocks} blocks`)
+            carsSucceeded++
+            const progress = manifest.getProgress(rootCid)
+            onProgress?.(progress.seen, progress.total, repairBytes)
+            const elapsed = (Date.now() - startTime) / 1000
+            const rate = totalFetched > 0 ? totalFetched / elapsed : 0
+            const eta = rate > 0 ? formatEta(Math.round(progress.missing / rate)) : ''
+            log('REPAIR', `[${tag}] sub-CAR ${row.block_cid.slice(0, 20)}... +${subBlocks} blocks (${progress.seen}/${progress.total}, ${progress.missing} remaining${eta ? `, ~${eta} left` : ''})`)
           }
         } catch (err: any) {
           log('REPAIR', `[${tag}] sub-CAR ${row.block_cid.slice(0, 20)}... failed: ${err.message}`)
@@ -94,7 +103,7 @@ export async function repairUpload(
       }
 
       const afterCars = manifest.getProgress(rootCid)
-      log('REPAIR', `[${tag}] After sub-CARs: ${afterCars.seen}/${afterCars.total} seen, ${afterCars.missing} remaining`)
+      log('REPAIR', `[${tag}] Sub-CARs done: ${carsSucceeded}/${carsAttempted} succeeded, ${afterCars.seen}/${afterCars.total} seen, ${afterCars.missing} remaining`)
       onProgress?.(afterCars.seen, afterCars.total, repairBytes)
     }
   }
