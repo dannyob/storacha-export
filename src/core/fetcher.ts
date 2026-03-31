@@ -25,26 +25,27 @@ class RateLimitGate {
   private _waiters: Array<() => void> = []
   private _timer: ReturnType<typeof setTimeout> | null = null
 
-  /** Called when a 429 is received. All waiters will pause. */
-  backoff(seconds: number) {
+  /** Called when a 429 is received. All waiters will pause. Adds jitter internally. */
+  backoff(retryAfterHeader: string | null) {
+    const parsed = retryAfterHeader ? parseInt(retryAfterHeader, 10) : NaN
+    const baseSecs = isNaN(parsed) ? 60 : parsed
+    const seconds = baseSecs + Math.floor(Math.random() * 5) // jitter to avoid thundering herd
+
     const resumeAt = Date.now() + seconds * 1000
-    if (resumeAt <= this._resumeAt) return // already waiting longer — don't log again
+    if (resumeAt <= this._resumeAt) return // already waiting longer
 
     const wasBlocked = this._resumeAt > Date.now()
     this._resumeAt = resumeAt
 
     if (!wasBlocked) {
-      // Only log on the first 429 in a burst
       log('INFO', `Rate limited — all fetches paused for ${seconds}s`)
     }
 
-    // Reset or set the timer
     if (this._timer) clearTimeout(this._timer)
     this._timer = setTimeout(() => {
       this._resumeAt = 0
       this._timer = null
       log('INFO', `Rate limit cleared — resuming fetches`)
-      // Wake all waiters
       const waiters = this._waiters.splice(0)
       for (const resolve of waiters) resolve()
     }, seconds * 1000)
@@ -67,30 +68,50 @@ export class GatewayFetcher {
   private rateGate = new RateLimitGate()
   constructor(private gatewayUrl: string) {}
 
+  /** Wait if rate-limited. For use by callers that do their own fetch. */
+  async waitForRateGate(): Promise<void> {
+    await this.rateGate.wait()
+  }
+
+  /** Signal a rate limit from an external 429. For use by callers that do their own fetch. */
+  signalRateLimit(retryAfterHeader: string | null): void {
+    this.rateGate.backoff(retryAfterHeader)
+  }
+
   /**
    * Fetch a CAR for a root CID and return it as a BlockStream.
-   * Respects rate limiting.
+   * Retries on 429 and 5xx with backoff.
    */
-  async fetchCar(rootCid: string): Promise<BlockStream> {
-    await this.rateGate.wait()
-
+  async fetchCar(rootCid: string, maxRetries = 3): Promise<BlockStream> {
     const url = `${this.gatewayUrl.replace(/\/$/, '')}/ipfs/${rootCid}?format=car`
-    const res = await fetch(url, { dispatcher: carDispatcher } as any)
 
-    if (res.status === 429) {
-      const retryAfter = res.headers.get('retry-after')
-      const seconds = retryAfter ? parseInt(retryAfter, 10) : 60
-      await res.body?.cancel()
-      this.rateGate.backoff(seconds)
-      throw new Error(`Gateway returned 429: Too Many Requests`)
+    for (let attempt = 0; attempt < maxRetries; attempt++) {
+      await this.rateGate.wait()
+
+      const res = await fetch(url, { dispatcher: carDispatcher } as any)
+
+      if (res.status === 429) {
+        await res.body?.cancel()
+        this.rateGate.backoff(res.headers.get('retry-after'))
+        continue
+      }
+
+      if (res.status >= 500) {
+        await res.body?.cancel()
+        const delay = Math.min(2000 * Math.pow(2, attempt), 30000)
+        log('RETRY', `CAR ${rootCid.slice(0, 20)}... HTTP ${res.status}, waiting ${Math.round(delay / 1000)}s`)
+        await new Promise(r => setTimeout(r, delay))
+        continue
+      }
+
+      if (!res.ok) {
+        await res.body?.cancel()
+        throw new Error(`Gateway returned ${res.status}: ${res.statusText}`)
+      }
+
+      return carToBlockStream(res.body!)
     }
-
-    if (!res.ok) {
-      await res.body?.cancel()
-      throw new Error(`Gateway returned ${res.status}: ${res.statusText}`)
-    }
-
-    return carToBlockStream(res.body!)
+    throw new Error(`CAR fetch failed after ${maxRetries} attempts`)
   }
 
   /**
@@ -118,10 +139,8 @@ export class GatewayFetcher {
         if (timer) { clearTimeout(timer); timer = undefined }
 
         if (res.status === 429) {
-          const retryAfter = res.headers.get('retry-after')
-          const seconds = retryAfter ? parseInt(retryAfter, 10) : 60
           await res.body?.cancel()
-          this.rateGate.backoff(seconds + Math.floor(Math.random() * 5))
+          this.rateGate.backoff(res.headers.get('retry-after'))
           continue
         }
 
