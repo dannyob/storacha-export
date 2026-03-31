@@ -112,7 +112,10 @@ export async function repairUpload(
       if (shouldPause?.()) {
         log('REPAIR', `  ${tag} paused by remote config`)
         while (shouldPause()) await new Promise(r => setTimeout(r, 10000))
-        log('REPAIR', `  ${tag} resumed`)
+        // Random delay 0-30s on resume to avoid thundering herd
+        const resumeDelay = Math.round(Math.random() * 30000)
+        log('REPAIR', `  ${tag} resuming in ${Math.round(resumeDelay / 1000)}s`)
+        await new Promise(r => setTimeout(r, resumeDelay))
       }
     }
 
