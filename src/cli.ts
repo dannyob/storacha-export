@@ -12,7 +12,7 @@ import { startDashboard } from './dashboard/server.js'
 import { generateDashboardHtml } from './dashboard/html.js'
 import type { DashboardState } from './dashboard/html.js'
 import { log, onLog, type LogLevel } from './util/log.js'
-import { filesize } from './util/format.js'
+import { filesize, formatEta } from './util/format.js'
 import fs from 'node:fs'
 import type { ExportBackend } from './backends/interface.js'
 
@@ -94,13 +94,9 @@ async function _main(argv: string[]) {
           const pct = live.totalBlocks ? ` (${Math.round(100 * live.blocks / live.totalBlocks)}%)` : ''
           const fetched = live.blocks - live.blocksAtStart
           const remaining = live.totalBlocks ? live.totalBlocks - live.blocks : 0
-          let etaStr = ''
-          if (fetched > 0 && remaining > 0 && elapsed > 0) {
-            const rate = fetched / elapsed
-            const etaSecs = Math.round(remaining / rate)
-            etaStr = etaSecs > 3600 ? ` ~${(etaSecs / 3600).toFixed(1)}h` : ` ~${Math.round(etaSecs / 60)}m`
-          }
-          detail = `repairing: ${live.blocks}/${total} blocks${pct}${etaStr} / ${elapsed}s`
+          const rate = fetched > 0 && elapsed > 0 ? fetched / elapsed : 0
+          const eta = rate > 0 && remaining > 0 ? ` ~${formatEta(Math.round(remaining / rate))}` : ''
+          detail = `repairing: ${live.blocks}/${total} blocks${pct}${eta} / ${elapsed}s`
         } else if (live.bytes > 0) {
           detail = `${filesize(live.bytes)} / ${rateStr} / ${elapsed}s`
         } else {
@@ -164,7 +160,7 @@ async function _main(argv: string[]) {
         case 'repair-progress':
           { const entry = activeJobInfo.get(cid)
             if (entry) {
-              if (entry.blocksAtStart === 0 && info.fetched > 0) entry.blocksAtStart = info.fetched
+              if (entry.blocksAtStart === 0) entry.blocksAtStart = info.fetched
               entry.prevBytes = entry.bytes; entry.prevTime = Date.now()
               entry.bytes = info.bytes; entry.blocks = info.fetched; entry.totalBlocks = info.total; entry.mode = 'repair'
             } }
