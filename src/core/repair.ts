@@ -50,7 +50,8 @@ export async function repairUpload(
     if (pass > 1) log('REPAIR', `[${tag}] Pass ${pass}: ${missing.length} more missing blocks`)
 
     let progressThisPass = false
-    const BATCH_SIZE = 5
+    const BATCH_SIZE = 3
+    let consecutiveFailBatches = 0
 
     for (let i = 0; i < missing.length; i += BATCH_SIZE) {
       const batch = missing.slice(i, i + BATCH_SIZE)
@@ -82,6 +83,19 @@ export async function repairUpload(
           log('REPAIR', `  FAIL ${batch[j].block_cid.slice(0, 24)}...: ${result.reason?.message}`)
           failed++
         }
+      }
+
+      // Track consecutive failed batches for backoff
+      const batchSuccesses = results.filter(r => r.status === 'fulfilled').length
+      if (batchSuccesses === 0) {
+        consecutiveFailBatches++
+        if (consecutiveFailBatches >= 3) {
+          const backoff = Math.min(30000, 5000 * consecutiveFailBatches)
+          log('REPAIR', `  ${tag} ${consecutiveFailBatches} failed batches in a row, backing off ${backoff / 1000}s`)
+          await new Promise(r => setTimeout(r, backoff))
+        }
+      } else {
+        consecutiveFailBatches = 0
       }
 
       const progress = manifest.getProgress(rootCid)
