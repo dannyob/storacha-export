@@ -183,6 +183,68 @@ export class LocalBackend implements ExportBackend {
     await writer.put({ cid: cidObj, bytes })
   }
 
+  async mergeRepairCar(rootCid: string): Promise<void> {
+    const mainPath = this.carPath(rootCid)
+    const repairPath = mainPath + '.repair'
+
+    if (!fs.existsSync(repairPath)) return
+
+    // Close any open writer for this root
+    await this.closeRepairWriter(rootCid)
+
+    // Read all blocks from both files, deduplicate by CID
+    const blocks = new Map<string, { cid: CID; bytes: Uint8Array }>()
+
+    // Read main CAR (may be truncated)
+    if (fs.existsSync(mainPath)) {
+      try {
+        const stream = fs.createReadStream(mainPath)
+        const iter = await CarBlockIterator.fromIterable(stream)
+        for await (const block of iter) {
+          blocks.set(block.cid.toString(), block)
+        }
+      } catch {
+        // Truncated main CAR — got what we got
+      }
+    }
+
+    // Read repair sidecar
+    try {
+      const stream = fs.createReadStream(repairPath)
+      const iter = await CarBlockIterator.fromIterable(stream)
+      for await (const block of iter) {
+        blocks.set(block.cid.toString(), block)
+      }
+    } catch {
+      // Truncated repair CAR — got what we got
+    }
+
+    // Write merged CAR
+    const tempPath = mainPath + '.merge'
+    const rootCidObj = CID.parse(rootCid)
+    const { writer, out } = CarWriter.create([rootCidObj])
+    const fileStream = fs.createWriteStream(tempPath)
+    const drain = (async () => {
+      for await (const chunk of out) fileStream.write(chunk)
+      fileStream.end()
+      await new Promise<void>((resolve, reject) => {
+        fileStream.on('finish', resolve)
+        fileStream.on('error', reject)
+      })
+    })()
+
+    for (const block of blocks.values()) {
+      await writer.put(block)
+    }
+    await writer.close()
+    await drain
+
+    // Atomic replace
+    fs.renameSync(tempPath, mainPath)
+    fs.unlinkSync(repairPath)
+    log('REPAIR', `[local] Merged ${blocks.size} blocks into ${rootCid.slice(0, 24)}...`)
+  }
+
   async closeRepairWriter(rootCid: string): Promise<void> {
     const entry = this.repairWriters.get(rootCid)
     if (!entry) return

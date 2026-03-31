@@ -184,3 +184,69 @@ describe('LocalBackend repair', () => {
     db.close()
   })
 })
+
+describe('LocalBackend mergeRepairCar', () => {
+  let tmpDir: string
+  let backend: LocalBackend
+
+  beforeEach(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'storacha-v2-local-merge-'))
+    backend = new LocalBackend({ outputDir: tmpDir })
+  })
+
+  afterEach(() => {
+    fs.rmSync(tmpDir, { recursive: true, force: true })
+  })
+
+  it('merges main CAR and repair sidecar into a deduplicated CAR', async () => {
+    const leaf1 = await makeRawBlock('merge-1')
+    const leaf2 = await makeRawBlock('merge-2')
+    const leaf3 = await makeRawBlock('merge-3')
+    const root = await makeDagPBNode([leaf1, leaf2, leaf3])
+    const rootCid = root.cid.toString()
+
+    // Write main CAR with root + leaf1
+    const mainCar = await buildCarBytes([root, leaf1], [root])
+    fs.writeFileSync(path.join(tmpDir, `${rootCid}.car`), mainCar)
+
+    // Write repair sidecar with leaf1 (duplicate) + leaf2 + leaf3
+    await backend.putBlock!(leaf1.cid.toString(), leaf1.bytes, rootCid)
+    await backend.putBlock!(leaf2.cid.toString(), leaf2.bytes, rootCid)
+    await backend.putBlock!(leaf3.cid.toString(), leaf3.bytes, rootCid)
+    await backend.closeRepairWriter(rootCid)
+
+    // Merge
+    await backend.mergeRepairCar(rootCid)
+
+    // .car.repair should be gone
+    expect(fs.existsSync(path.join(tmpDir, `${rootCid}.car.repair`))).toBe(false)
+
+    // Final CAR should have exactly 4 blocks (deduplicated)
+    const finalData = fs.readFileSync(path.join(tmpDir, `${rootCid}.car`))
+    const iter = await CarBlockIterator.fromIterable(
+      (async function* () { yield new Uint8Array(finalData) })()
+    )
+    const cids = new Set<string>()
+    for await (const b of iter) cids.add(b.cid.toString())
+    expect(cids.size).toBe(4)
+    expect(cids.has(root.cid.toString())).toBe(true)
+    expect(cids.has(leaf1.cid.toString())).toBe(true)
+    expect(cids.has(leaf2.cid.toString())).toBe(true)
+    expect(cids.has(leaf3.cid.toString())).toBe(true)
+  })
+
+  it('mergeRepairCar is a no-op when no sidecar exists', async () => {
+    const leaf = await makeRawBlock('noop-test')
+    const root = await makeDagPBNode([leaf])
+    const rootCid = root.cid.toString()
+
+    const mainCar = await buildCarBytes([root, leaf], [root])
+    const carPath = path.join(tmpDir, `${rootCid}.car`)
+    fs.writeFileSync(carPath, mainCar)
+
+    const sizeBefore = fs.statSync(carPath).size
+    await backend.mergeRepairCar(rootCid)
+    const sizeAfter = fs.statSync(carPath).size
+    expect(sizeAfter).toBe(sizeBefore)
+  })
+})
