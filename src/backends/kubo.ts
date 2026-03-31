@@ -93,7 +93,7 @@ export class KuboBackend implements ExportBackend {
     }
   }
 
-  async putBlock(cid: string, bytes: Uint8Array): Promise<void> {
+  async putBlock(cid: string, bytes: Uint8Array, _rootCid?: string): Promise<void> {
     const form = new FormData()
     form.append('file', new Blob([bytes as Uint8Array<ArrayBuffer>]), cid)
     const res = await fetch(`${this.apiUrl}/api/v0/block/put?cid-codec=raw`, {

@@ -16,8 +16,8 @@ export interface ExportBackend {
   /** Check if an individual block exists in the store */
   hasBlock?(cid: string): Promise<boolean>
 
-  /** Store an individual block */
-  putBlock?(cid: string, bytes: Uint8Array): Promise<void>
+  /** Store an individual block (rootCid identifies which upload this belongs to) */
+  putBlock?(cid: string, bytes: Uint8Array, rootCid?: string): Promise<void>
 
   /** Override repair strategy entirely */
   repair?(rootCid: string, manifest: BlockManifest, fetchBlock: (cid: string) => Promise<Block>): Promise<boolean>
