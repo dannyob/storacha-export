@@ -1,6 +1,6 @@
 import * as dagPB from '@ipld/dag-pb'
 import type { BlockManifest } from './manifest.js'
-import type { Block } from './blocks.js'
+import type { Block, BlockStream } from './blocks.js'
 import { log } from '../util/log.js'
 import { formatEta } from '../util/format.js'
 
@@ -13,6 +13,7 @@ export interface RepairResult {
 export interface RepairOptions {
   onProgress?: (fetched: number, total: number, bytes: number) => void
   onBlock?: (block: Block) => Promise<void>
+  fetchSubCar?: (cid: string) => Promise<BlockStream>
   throttleMs?: number
   batchSize?: number
 }
@@ -29,7 +30,7 @@ export async function repairUpload(
   fetchBlock: (cidStr: string) => Promise<Block>,
   options: RepairOptions = {},
 ): Promise<RepairResult | null> {
-  const { onProgress, onBlock, throttleMs = 1000, batchSize = 5 } = options
+  const { onProgress, onBlock, fetchSubCar, throttleMs = 1000, batchSize = 5 } = options
   const tag = rootCid.slice(0, 24) + '...'
 
   let missing = manifest.getMissing(rootCid)
@@ -46,7 +47,61 @@ export async function repairUpload(
   let repairBytes = 0
   const startTime = Date.now()
 
-  // Iterative repair: fetch missing blocks, decode dag-pb to discover more, repeat
+  // Helper: process a fetched block — mark seen, push to backend, extract links
+  async function processBlock(block: Block): Promise<void> {
+    const cidStr = block.cid.toString()
+    manifest.markSeen(rootCid, cidStr, block.cid.code)
+    totalFetched++
+    repairBytes += block.bytes.length
+    if (onBlock) await onBlock(block)
+
+    if (block.cid.code === 0x70) {
+      try {
+        const node = dagPB.decode(block.bytes)
+        for (const link of node.Links) {
+          manifest.addLink(rootCid, link.Hash.toString(), link.Hash.code, cidStr)
+        }
+      } catch {}
+    }
+  }
+
+  // Phase 1: Fetch missing dag-pb nodes as sub-CARs (gets whole subtrees per request)
+  if (fetchSubCar) {
+    const missingDagPB = missing.filter(r => r.codec === 0x70)
+    if (missingDagPB.length > 0) {
+      log('REPAIR', `[${tag}] Fetching ${missingDagPB.length} dag-pb nodes as sub-CARs`)
+
+      for (const row of missingDagPB) {
+        if (manifest.isSeen(rootCid, row.block_cid)) continue
+
+        try {
+          const stream = await fetchSubCar(row.block_cid)
+          let subBlocks = 0
+          for await (const block of stream) {
+            if (!manifest.isSeen(rootCid, block.cid.toString())) {
+              await processBlock(block)
+              subBlocks++
+            }
+          }
+          if (subBlocks > 0) {
+            log('REPAIR', `  ${tag} sub-CAR ${row.block_cid.slice(0, 20)}... yielded ${subBlocks} blocks`)
+          }
+        } catch (err: any) {
+          log('REPAIR', `  ${tag} sub-CAR ${row.block_cid.slice(0, 20)}... failed: ${err.message}`)
+        }
+
+        if (throttleMs > 0) await new Promise(r => setTimeout(r, throttleMs))
+      }
+
+      const afterCars = manifest.getProgress(rootCid)
+      log('REPAIR', `[${tag}] After sub-CARs: ${afterCars.seen}/${afterCars.total} seen, ${afterCars.missing} remaining`)
+      onProgress?.(afterCars.seen, afterCars.total, repairBytes)
+    }
+  }
+
+  // Phase 2: Fetch remaining missing blocks individually
+  missing = manifest.getMissing(rootCid)
+
   let pass = 0
   while (missing.length > 0) {
     pass++
@@ -66,29 +121,14 @@ export async function repairUpload(
 
       for (const [j, result] of results.entries()) {
         if (result.status === 'fulfilled') {
-          const { block, row } = result.value
-          totalFetched++
+          await processBlock(result.value.block)
           progressThisPass = true
-          repairBytes += block.bytes.length
-          manifest.markSeen(rootCid, row.block_cid, row.codec)
-
-          if (onBlock) await onBlock(block)
-
-          if (block.cid.code === 0x70) {
-            try {
-              const node = dagPB.decode(block.bytes)
-              for (const link of node.Links) {
-                manifest.addLink(rootCid, link.Hash.toString(), link.Hash.code, block.cid.toString())
-              }
-            } catch {}
-          }
         } else {
           log('REPAIR', `  FAIL ${batch[j].block_cid.slice(0, 24)}...: ${result.reason?.message}`)
           failed++
         }
       }
 
-      // Track consecutive failed batches for backoff
       const batchSuccesses = results.filter(r => r.status === 'fulfilled').length
       if (batchSuccesses === 0) {
         consecutiveFailBatches++
@@ -113,10 +153,8 @@ export async function repairUpload(
       if (throttleMs > 0) await new Promise(r => setTimeout(r, throttleMs))
     }
 
-    // Check if decoding dag-pb blocks revealed more missing blocks
     missing = manifest.getMissing(rootCid)
 
-    // Stop if no progress was made this pass (all remaining blocks are unfetchable)
     if (!progressThisPass) {
       log('REPAIR', `[${tag}] No progress in pass ${pass}, stopping`)
       break

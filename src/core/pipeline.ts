@@ -56,6 +56,7 @@ export async function exportUpload(options: ExportUploadOptions): Promise<void> 
       {
         onProgress: (fetched, total, bytes) => onProgress?.({ type: 'repair-progress', rootCid, fetched, total, bytes }),
         onBlock: async (block) => { if (backend.putBlock) await backend.putBlock(block.cid.toString(), block.bytes) },
+        fetchSubCar: (cid) => fetcher.fetchCar(cid),
       },
     )
 
@@ -221,6 +222,7 @@ export async function exportUpload(options: ExportUploadOptions): Promise<void> 
       {
         onProgress: (fetched, total, bytes) => onProgress?.({ type: 'repair-progress', rootCid, fetched, total, bytes }),
         onBlock: async (block) => { if (backend.putBlock) await backend.putBlock(block.cid.toString(), block.bytes) },
+        fetchSubCar: (cid) => fetcher.fetchCar(cid),
       },
     )
 
