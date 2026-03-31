@@ -85,7 +85,7 @@ export async function repairUpload(
       }
 
       const progress = manifest.getProgress(rootCid)
-      onProgress?.(totalFetched, totalFetched + progress.missing, repairBytes)
+      onProgress?.(progress.seen, progress.total, repairBytes)
       if ((i + BATCH_SIZE) % 50 < BATCH_SIZE) {
         log('REPAIR', `  ${tag} ${progress.seen}/${progress.total} blocks seen (${progress.missing} remaining, +${totalFetched} this session)`)
       }
