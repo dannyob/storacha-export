@@ -111,6 +111,29 @@ describe('LocalBackend', () => {
     for await (const b of iter) repairBlocks.push(b)
     expect(repairBlocks).toHaveLength(2)
   })
+
+  it('close() flushes any open repair writers', async () => {
+    const leaf = await makeRawBlock('close-test')
+    const root = await makeDagPBNode([leaf])
+    const rootCid = root.cid.toString()
+
+    async function* rootBlocks(): AsyncIterable<Block> { yield root }
+    await backend.importCar(rootCid, rootBlocks())
+
+    await backend.putBlock!(leaf.cid.toString(), leaf.bytes, rootCid)
+    await backend.close!()
+
+    const repairPath = path.join(tmpDir, `${rootCid}.car.repair`)
+    expect(fs.existsSync(repairPath)).toBe(true)
+
+    const data = fs.readFileSync(repairPath)
+    const iter = await CarBlockIterator.fromIterable(
+      (async function* () { yield new Uint8Array(data) })()
+    )
+    const blocks: any[] = []
+    for await (const b of iter) blocks.push(b)
+    expect(blocks).toHaveLength(1)
+  })
 })
 
 describe('LocalBackend repair flow', () => {
