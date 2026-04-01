@@ -1,6 +1,6 @@
 # storacha-export
 
-Export your Storacha / web3.storage space content to local files, IPFS (Kubo), or IPFS Cluster.
+Export your Storacha / web3.storage space content to local files or IPFS (Kubo).
 
 ## How it works
 
@@ -31,10 +31,6 @@ Writes each upload as a CAR file in an output directory. On repair, reads the ex
 ### `kubo` -- IPFS node
 
 Streams raw CAR bytes directly to kubo's `dag/import` endpoint. Repair pushes individual blocks via `block/put`. Verification uses `dag/stat` for full DAG traversal.
-
-### `cluster` -- IPFS Cluster
-
-Uploads CARs via the Cluster REST API (`/add?format=car`). Checks pin status via `/pins/{cid}`.
 
 ## Dashboard
 
@@ -94,10 +90,9 @@ storacha-export --serve 0.0.0.0:8087 --html-out /var/www/export.html --backend k
 
 | Option | Description |
 |--------|-------------|
-| `--backend <type>` | Backend: `local`, `kubo`, or `cluster` |
+| `--backend <type>` | Backend: `local` or `kubo` |
 | `--output <dir>` | Output directory (local backend) |
 | `--kubo-api <url>` | Kubo API endpoint (URL or multiaddr, default: `http://127.0.0.1:5001`) |
-| `--cluster-api <url>` | IPFS Cluster API endpoint |
 | `--space <name...>` | Export only named spaces (repeatable) |
 | `--exclude-space <name...>` | Skip named spaces (repeatable) |
 | `--gateway <url>` | Gateway URL (default: `https://w3s.link`) |
