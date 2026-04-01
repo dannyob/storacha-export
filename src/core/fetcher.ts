@@ -176,20 +176,4 @@ export class GatewayFetcher {
     throw new Error('Block fetch failed after retries')
   }
 
-  /**
-   * Fetch multiple blocks as a BlockStream, skipping those that fail.
-   */
-  async *fetchBlocks(cidStrs: string[], onProgress?: (fetched: number, total: number) => void): BlockStream {
-    let fetched = 0
-    for (const cidStr of cidStrs) {
-      try {
-        const block = await this.fetchBlock(cidStr)
-        fetched++
-        onProgress?.(fetched, cidStrs.length)
-        yield block
-      } catch (err: any) {
-        log('REPAIR', `  FAIL ${cidStr.slice(0, 24)}...: ${err.message}`)
-      }
-    }
-  }
 }

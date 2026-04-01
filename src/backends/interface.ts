@@ -18,9 +18,6 @@ export interface ExportBackend {
   /** Store an individual block (rootCid identifies which upload this belongs to) */
   putBlock?(cid: string, bytes: Uint8Array, rootCid?: string): Promise<void>
 
-  /** Get the total size of a DAG in bytes (if available) */
-  getContentSize?(rootCid: string): Promise<number | null>
-
   /** Deep verification — check that the full DAG is traversable */
   verifyDag?(rootCid: string): Promise<{ valid: boolean; error?: string }>
 }

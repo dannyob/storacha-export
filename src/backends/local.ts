@@ -64,15 +64,6 @@ export class LocalBackend implements ExportBackend {
     }
   }
 
-  async getContentSize(rootCid: string): Promise<number | null> {
-    const filePath = this.carPath(rootCid)
-    try {
-      return fs.statSync(filePath).size
-    } catch {
-      return null
-    }
-  }
-
   async verifyDag(rootCid: string): Promise<{ valid: boolean; error?: string }> {
     const filePath = this.carPath(rootCid)
     if (!fs.existsSync(filePath)) {

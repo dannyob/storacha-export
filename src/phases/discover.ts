@@ -1,13 +1,6 @@
-import { detectCredentials, login } from '../auth.js'
-import type { UploadQueue } from '../core/queue.js'
 import type Database from 'better-sqlite3'
 import { log } from '../util/log.js'
 import { filesize } from '../util/format.js'
-
-export interface DiscoverResult {
-  client: any
-  spaces: Array<{ did: string; name: string; totalBytes?: number }>
-}
 
 /**
  * Enumerate all uploads across selected spaces.
