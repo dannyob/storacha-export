@@ -36,10 +36,9 @@ async function _main(argv: string[]) {
     .name('storacha-export')
     .description('Export Storacha space content to storage backends')
     .version('2.0.0')
-    .option('--backend <type...>', 'Backend(s): kubo')
+    .option('--backend <type...>', 'Backend(s): kubo, local')
     .option('--output <dir>', 'Output directory (local backend)')
     .option('--kubo-api <url>', 'Kubo API endpoint (URL or multiaddr)', 'http://127.0.0.1:5001')
-    .option('--cluster-api <url>', 'IPFS Cluster API endpoint')
     .option('--space <name...>', 'Export only named spaces (repeatable)')
     .option('--exclude-space <name...>', 'Skip named spaces (repeatable)')
     .option('--fresh', 'Start over, discarding previous progress tracking')
@@ -264,7 +263,7 @@ async function _main(argv: string[]) {
   let backends: ExportBackend[]
   if (opts.backend) {
     backends = opts.backend.map((name: string) =>
-      createBackend(name, { apiUrl: opts.kuboApi, outputDir: opts.output, clusterApi: opts.clusterApi })
+      createBackend(name, { apiUrl: opts.kuboApi, outputDir: opts.output })
     )
   } else {
     const backendName = await select({
@@ -272,7 +271,6 @@ async function _main(argv: string[]) {
       choices: [
         { name: 'kubo — local IPFS node (dag/import)', value: 'kubo' },
         { name: 'local — save CAR files to disk', value: 'local' },
-        { name: 'cluster — IPFS Cluster API', value: 'cluster' },
       ],
     })
     let config: Record<string, any> = {}
@@ -280,8 +278,6 @@ async function _main(argv: string[]) {
       config = { apiUrl: await input({ message: 'Kubo API URL:', default: 'http://127.0.0.1:5001' }) }
     } else if (backendName === 'local') {
       config = { outputDir: await input({ message: 'Output directory:', default: './export' }) }
-    } else if (backendName === 'cluster') {
-      config = { apiUrl: await input({ message: 'Cluster API URL:', default: 'http://127.0.0.1:9094' }) }
     }
     backends = [createBackend(backendName, config)]
   }
