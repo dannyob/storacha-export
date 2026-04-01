@@ -65,6 +65,19 @@ describe('LocalBackend', () => {
     expect(result.valid).toBe(true)
   })
 
+  it('verifyDag rejects a parseable but incomplete CAR', async () => {
+    const leaf = await makeRawBlock('missing-leaf')
+    const root = await makeDagPBNode([leaf])
+    const rootCid = root.cid.toString()
+
+    const incompleteCar = await buildCarBytes([root], [root])
+    fs.writeFileSync(path.join(tmpDir, `${rootCid}.car`), incompleteCar)
+
+    const result = await backend.verifyDag!(rootCid)
+    expect(result.valid).toBe(false)
+    expect(result.error).toContain(leaf.cid.toString().slice(0, 16))
+  })
+
   it('putBlock writes a block to a .car.repair sidecar', async () => {
     const leaf = await makeRawBlock('put-test')
     const root = await makeDagPBNode([leaf])
