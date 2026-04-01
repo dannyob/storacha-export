@@ -2,10 +2,19 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { LocalBackend } from '../../src/backends/local.js'
 import { makeRawBlock, makeDagPBNode, buildCarBytes } from '../core/blocks.test.js'
 import { CarBlockIterator } from '@ipld/car'
+import { CID } from 'multiformats/cid'
+import { sha256 } from 'multiformats/hashes/sha2'
 import fs from 'node:fs'
 import path from 'node:path'
 import os from 'node:os'
 import type { Block } from '../../src/core/blocks.js'
+
+async function makeUnsupportedBlock(data: string): Promise<{ cid: CID; bytes: Uint8Array }> {
+  const bytes = new TextEncoder().encode(data)
+  const hash = await sha256.digest(bytes)
+  const cid = CID.create(1, 0x300, hash)
+  return { cid, bytes }
+}
 
 describe('LocalBackend', () => {
   let tmpDir: string
@@ -51,7 +60,7 @@ describe('LocalBackend', () => {
     expect(fs.existsSync(nested)).toBe(true)
   })
 
-  it('verifyDag checks CAR is parseable', async () => {
+  it('verifyDag accepts a complete DAG', async () => {
     const leaf = await makeRawBlock('verify-test')
     const root = await makeDagPBNode([leaf])
 
@@ -76,6 +85,33 @@ describe('LocalBackend', () => {
     const result = await backend.verifyDag!(rootCid)
     expect(result.valid).toBe(false)
     expect(result.error).toContain(leaf.cid.toString().slice(0, 16))
+  })
+
+  it('verifyDag rejects a parseable CAR missing a grandchild through dag-pb recursion', async () => {
+    const grandchild = await makeRawBlock('missing-grandchild')
+    const child = await makeDagPBNode([grandchild])
+    const root = await makeDagPBNode([child])
+    const rootCid = root.cid.toString()
+
+    const incompleteCar = await buildCarBytes([root, child], [root])
+    fs.writeFileSync(path.join(tmpDir, `${rootCid}.car`), incompleteCar)
+
+    const result = await backend.verifyDag!(rootCid)
+    expect(result.valid).toBe(false)
+    expect(result.error).toContain(grandchild.cid.toString().slice(0, 16))
+  })
+
+  it('verifyDag fails closed on reachable unsupported codecs', async () => {
+    const unsupported = await makeUnsupportedBlock('unsupported-child')
+    const root = await makeDagPBNode([unsupported])
+    const rootCid = root.cid.toString()
+
+    const car = await buildCarBytes([root, unsupported], [root])
+    fs.writeFileSync(path.join(tmpDir, `${rootCid}.car`), car)
+
+    const result = await backend.verifyDag!(rootCid)
+    expect(result.valid).toBe(false)
+    expect(result.error?.toLowerCase()).toContain('unsupported codec')
   })
 
   it('putBlock writes a block to a .car.repair sidecar', async () => {

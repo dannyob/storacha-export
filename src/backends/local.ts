@@ -7,6 +7,9 @@ import type { ExportBackend } from './interface.js'
 import type { BlockStream } from '../core/blocks.js'
 import { log } from '../util/log.js'
 
+const RAW_CODEC = 0x55
+const DAG_PB_CODEC = 0x70
+
 export class LocalBackend implements ExportBackend {
   name = 'local' as const
 
@@ -73,9 +76,18 @@ export class LocalBackend implements ExportBackend {
     try {
       const stream = fs.createReadStream(filePath)
       const iterator = await CarBlockIterator.fromIterable(stream)
-      const blocks = new Map<string, Uint8Array>()
+      const blocks = new Map<string, { codec: number; links: string[] }>()
       for await (const { cid, bytes } of iterator) {
-        blocks.set(cid.toString(), bytes)
+        const cidStr = cid.toString()
+        if (cid.code === DAG_PB_CODEC) {
+          const node = dagPB.decode(bytes)
+          blocks.set(cidStr, {
+            codec: cid.code,
+            links: node.Links.map(link => link.Hash.toString()),
+          })
+        } else {
+          blocks.set(cidStr, { codec: cid.code, links: [] })
+        }
       }
 
       if (!blocks.has(rootCid)) {
@@ -90,18 +102,23 @@ export class LocalBackend implements ExportBackend {
         if (visited.has(cidStr)) continue
         visited.add(cidStr)
 
-        const bytes = blocks.get(cidStr)
-        if (!bytes) {
+        const block = blocks.get(cidStr)
+        if (!block) {
           return { valid: false, error: `Missing reachable block: ${cidStr}` }
         }
 
-        const cid = CID.parse(cidStr)
-        if (cid.code === 0x70) {
-          const node = dagPB.decode(bytes)
-          for (const link of node.Links) {
-            stack.push(link.Hash.toString())
+        if (block.codec === DAG_PB_CODEC) {
+          for (const link of block.links) {
+            stack.push(link)
           }
+          continue
         }
+
+        if (block.codec === RAW_CODEC) {
+          continue
+        }
+
+        return { valid: false, error: `Unsupported codec for reachable block: ${cidStr} (0x${block.codec.toString(16)})` }
       }
 
       return { valid: true }
