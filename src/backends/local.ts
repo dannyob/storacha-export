@@ -177,6 +177,12 @@ export class LocalBackend implements ExportBackend {
     log('REPAIR', `[local] Merged ${blocks.size} blocks into ${rootCid.slice(0, 24)}...`)
   }
 
+  async close(): Promise<void> {
+    for (const rootCid of [...this.repairWriters.keys()]) {
+      await this.closeRepairWriter(rootCid)
+    }
+  }
+
   async closeRepairWriter(rootCid: string): Promise<void> {
     const entry = this.repairWriters.get(rootCid)
     if (!entry) return
