@@ -1,0 +1,26 @@
+import type { BlockStream } from '../core/blocks.js'
+
+export interface ExportBackend {
+  name: string
+
+  init?(): Promise<void>
+  close?(): Promise<void>
+
+  /** Import CAR data — accepts raw CAR byte stream or a BlockStream */
+  importCar(rootCid: string, stream: BlockStream | AsyncIterable<Uint8Array> | NodeJS.ReadableStream): Promise<void>
+
+  /** Check if a root CID is fully stored (pinned) */
+  hasContent(rootCid: string): Promise<boolean>
+
+  /** Check if an individual block exists in the store */
+  hasBlock?(cid: string): Promise<boolean>
+
+  /** Store an individual block (rootCid identifies which upload this belongs to) */
+  putBlock?(cid: string, bytes: Uint8Array, rootCid?: string): Promise<void>
+
+  /** Get the total size of a DAG in bytes (if available) */
+  getContentSize?(rootCid: string): Promise<number | null>
+
+  /** Deep verification — check that the full DAG is traversable */
+  verifyDag?(rootCid: string): Promise<{ valid: boolean; error?: string }>
+}
