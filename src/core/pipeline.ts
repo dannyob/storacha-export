@@ -49,19 +49,8 @@ export async function exportUpload(options: ExportUploadOptions): Promise<void> 
     queue.setStatus(rootCid, backend.name, 'repairing')
     onProgress?.({ type: 'repairing', rootCid, totalBlocks: existingProgress.missing })
 
-    // If the backend has its own repair strategy (e.g. local reads truncated CAR from disk), use it
-    if (backend.repair) {
-      const ok = await backend.repair(rootCid, manifest, (cidStr) => fetcher.fetchBlock(cidStr))
-      if (ok && await backend.hasContent(rootCid)) {
-        queue.markComplete(rootCid, backend.name, 0)
-        onProgress?.({ type: 'done', rootCid, bytes: 0 })
-        log('REPAIR', `${tag} Repaired and verified (backend repair)`)
-        return
-      }
-    }
-
     // Generic repair: fetch missing blocks individually
-    if (!backend.repair || !await backend.hasContent(rootCid)) {
+    {
       const result = await repairUpload(
         rootCid,
         manifest,
@@ -74,6 +63,11 @@ export async function exportUpload(options: ExportUploadOptions): Promise<void> 
       )
 
       if (result && result.complete) {
+        // Merge repair sidecar for local backend
+        if ('mergeRepairCar' in backend) {
+          await (backend as any).mergeRepairCar(rootCid)
+        }
+
         if (await backend.hasContent(rootCid)) {
           queue.markComplete(rootCid, backend.name, 0)
           onProgress?.({ type: 'done', rootCid, bytes: 0 })
@@ -236,19 +230,8 @@ export async function exportUpload(options: ExportUploadOptions): Promise<void> 
     queue.setStatus(rootCid, backend.name, 'repairing')
     onProgress?.({ type: 'repairing', rootCid, totalBlocks: progress.missing })
 
-    // Backend-specific repair (e.g. local rewrites truncated CAR)
-    if (backend.repair) {
-      const ok = await backend.repair(rootCid, manifest, (cidStr) => fetcher.fetchBlock(cidStr))
-      if (ok && await backend.hasContent(rootCid)) {
-        queue.markComplete(rootCid, backend.name, 0)
-        onProgress?.({ type: 'done', rootCid, bytes: 0 })
-        log('REPAIR', `${tag} Repaired and verified (backend repair)`)
-        return
-      }
-    }
-
     // Generic repair
-    if (!backend.repair || !await backend.hasContent(rootCid)) {
+    {
       const result = await repairUpload(
         rootCid,
         manifest,
@@ -261,6 +244,11 @@ export async function exportUpload(options: ExportUploadOptions): Promise<void> 
       )
 
       if (result && result.complete) {
+        // Merge repair sidecar for local backend
+        if ('mergeRepairCar' in backend) {
+          await (backend as any).mergeRepairCar(rootCid)
+        }
+
         if (await backend.hasContent(rootCid)) {
           queue.markComplete(rootCid, backend.name, 0)
           onProgress?.({ type: 'done', rootCid, bytes: 0 })
