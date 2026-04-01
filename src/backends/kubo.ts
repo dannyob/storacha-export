@@ -1,8 +1,6 @@
 import { Readable } from 'node:stream'
-import { CID } from 'multiformats/cid'
 import type { ExportBackend } from './interface.js'
-import type { BlockStream, Block } from '../core/blocks.js'
-import type { BlockManifest } from '../core/manifest.js'
+import type { BlockStream } from '../core/blocks.js'
 
 const BOUNDARY = '----StorachaExportBoundary'
 
@@ -105,17 +103,6 @@ export class KuboBackend implements ExportBackend {
       throw new Error(`block/put failed (${res.status}): ${text}`)
     }
     await res.text()
-  }
-
-  async getContentSize(rootCid: string): Promise<number | null> {
-    try {
-      const res = await fetch(`${this.apiUrl}/api/v0/dag/stat?arg=${rootCid}`, { method: 'POST' })
-      if (!res.ok) return null
-      const data = await res.json() as { Size?: number }
-      return data.Size ?? null
-    } catch {
-      return null
-    }
   }
 
   async verifyDag(rootCid: string): Promise<{ valid: boolean; error?: string }> {

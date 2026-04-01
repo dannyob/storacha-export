@@ -44,7 +44,6 @@ export function generateDashboardHtml(state: DashboardState, options?: { staticF
   const pending = stats.pending ?? 0
   const downloading = stats.downloading ?? 0
   const repairing = stats.repairing ?? 0
-  const active = downloading + repairing
   const totalBytes = bySpace.reduce((s, r) => s + (r.bytes || 0), 0)
   let grandTotalBytes = 0
   for (const v of spaceSizes.values()) grandTotalBytes += v
