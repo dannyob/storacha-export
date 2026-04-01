@@ -1,6 +1,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { CarWriter, CarBlockIterator } from '@ipld/car'
+import * as dagPB from '@ipld/dag-pb'
 import { CID } from 'multiformats/cid'
 import type { ExportBackend } from './interface.js'
 import type { BlockStream } from '../core/blocks.js'
@@ -72,9 +73,38 @@ export class LocalBackend implements ExportBackend {
     try {
       const stream = fs.createReadStream(filePath)
       const iterator = await CarBlockIterator.fromIterable(stream)
-      let count = 0
-      for await (const _ of iterator) count++
-      return count > 0 ? { valid: true } : { valid: false, error: 'Empty CAR' }
+      const blocks = new Map<string, Uint8Array>()
+      for await (const { cid, bytes } of iterator) {
+        blocks.set(cid.toString(), bytes)
+      }
+
+      if (!blocks.has(rootCid)) {
+        return { valid: false, error: `Root block missing: ${rootCid}` }
+      }
+
+      const stack = [rootCid]
+      const visited = new Set<string>()
+
+      while (stack.length > 0) {
+        const cidStr = stack.pop()!
+        if (visited.has(cidStr)) continue
+        visited.add(cidStr)
+
+        const bytes = blocks.get(cidStr)
+        if (!bytes) {
+          return { valid: false, error: `Missing reachable block: ${cidStr}` }
+        }
+
+        const cid = CID.parse(cidStr)
+        if (cid.code === 0x70) {
+          const node = dagPB.decode(bytes)
+          for (const link of node.Links) {
+            stack.push(link.Hash.toString())
+          }
+        }
+      }
+
+      return { valid: true }
     } catch (err: any) {
       return { valid: false, error: err.message }
     }
