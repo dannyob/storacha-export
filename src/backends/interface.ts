@@ -1,5 +1,4 @@
-import type { BlockStream, Block } from '../core/blocks.js'
-import type { BlockManifest } from '../core/manifest.js'
+import type { BlockStream } from '../core/blocks.js'
 
 export interface ExportBackend {
   name: string
@@ -18,9 +17,6 @@ export interface ExportBackend {
 
   /** Store an individual block (rootCid identifies which upload this belongs to) */
   putBlock?(cid: string, bytes: Uint8Array, rootCid?: string): Promise<void>
-
-  /** Override repair strategy entirely */
-  repair?(rootCid: string, manifest: BlockManifest, fetchBlock: (cid: string) => Promise<Block>): Promise<boolean>
 
   /** Get the total size of a DAG in bytes (if available) */
   getContentSize?(rootCid: string): Promise<number | null>
