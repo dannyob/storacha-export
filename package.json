@@ -1,6 +1,6 @@
 {
   "name": "storacha-export",
-  "version": "0.1.0",
+  "version": "2.0.0",
   "description": "Export Storacha space content to pluggable storage backends",
   "type": "module",
   "bin": {
@@ -8,8 +8,16 @@
   },
   "scripts": {
     "test": "node --test 'test/**/*.test.js' 'test/*.test.js'",
-    "start": "node bin/storacha-export.js"
+    "start": "node bin/storacha-export.js",
+    "build": "tsc",
+    "prepublishOnly": "npm run build",
+    "test:ts": "vitest run",
+    "test:watch": "vitest"
   },
+  "files": [
+    "dist",
+    "bin"
+  ],
   "license": "AGPL-3.0-or-later",
   "engines": {
     "node": ">=20"
@@ -28,6 +36,10 @@
     "undici": "^7.24.6"
   },
   "devDependencies": {
-    "@types/better-sqlite3": "^7.6.13"
+    "@types/better-sqlite3": "^7.6.13",
+    "@types/node": "^25.5.0",
+    "tsx": "^4.21.0",
+    "typescript": "^6.0.2",
+    "vitest": "^4.1.2"
   }
 }
