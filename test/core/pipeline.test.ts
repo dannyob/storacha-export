@@ -152,4 +152,113 @@ describe('exportUpload', () => {
       globalThis.fetch = originalFetch
     }
   })
+
+  it('skips download when verifyDag already confirms completeness', async () => {
+    const rootCid = 'bafyalreadycomplete'
+    const originalFetch = globalThis.fetch
+    globalThis.fetch = vi.fn(async () => {
+      throw new Error('fetch should not be called')
+    }) as any
+
+    let importCalls = 0
+    const backend: ExportBackend = {
+      name: 'ready',
+      async importCar() {
+        importCalls++
+      },
+      async verifyDag() {
+        return { valid: true }
+      },
+    }
+
+    queue.add({ rootCid, spaceDid: 'did:key:test', spaceName: 'Test', backend: 'ready' })
+
+    try {
+      await exportUpload({
+        rootCid,
+        backend,
+        queue,
+        manifest,
+        fetcher: new GatewayFetcher('http://gateway.test'),
+        gatewayUrl: 'http://gateway.test',
+      })
+
+      expect(importCalls).toBe(0)
+      expect(globalThis.fetch).not.toHaveBeenCalled()
+      expect(queue.getStatus(rootCid, 'ready')).toBe('complete')
+    } finally {
+      globalThis.fetch = originalFetch
+    }
+  })
+
+  it('waits for tracking to finish before deciding whether repair can run', async () => {
+    const leaf = await makeRawBlock('needs-repair')
+    const root = await makeDagPBNode([leaf])
+    const rootCid = root.cid.toString()
+    const truncatedCar = await buildCarBytes([root], [root])
+
+    const originalFetch = globalThis.fetch
+    globalThis.fetch = vi.fn(async (input: RequestInfo | URL) => {
+      const url = new URL(String(input))
+      if (url.pathname === `/ipfs/${rootCid}` && url.searchParams.get('format') === 'car') {
+        return new Response(truncatedCar, {
+          status: 200,
+          headers: { 'Content-Type': 'application/vnd.ipld.car' },
+        })
+      }
+      if (url.pathname === `/ipfs/${leaf.cid.toString()}` && url.searchParams.get('format') === 'raw') {
+        return new Response(leaf.bytes, {
+          status: 200,
+          headers: { 'Content-Type': 'application/octet-stream' },
+        })
+      }
+      return new Response('not found', { status: 404 })
+    }) as any
+
+    const originalFromIterable = CarBlockIterator.fromIterable
+    const fromIterableSpy = vi.spyOn(CarBlockIterator, 'fromIterable').mockImplementation(async (iterable: any) => {
+      const iterator = await originalFromIterable(iterable)
+      return (async function* () {
+        for await (const block of iterator) {
+          await new Promise(resolve => setTimeout(resolve, 25))
+          yield block
+        }
+      })()
+    })
+
+    let repaired = false
+    const backend: ExportBackend = {
+      name: 'repairable',
+      async importCar(_rootCid: string, stream: any): Promise<void> {
+        for await (const _chunk of stream) {}
+      },
+      async verifyDag(): Promise<{ valid: boolean; error?: string }> {
+        return repaired
+          ? { valid: true }
+          : { valid: false, error: 'missing repaired block' }
+      },
+      async putBlock(cid: string): Promise<void> {
+        if (cid === leaf.cid.toString()) repaired = true
+      },
+    }
+
+    queue.add({ rootCid, spaceDid: 'did:key:test', spaceName: 'Test', backend: 'repairable' })
+
+    try {
+      await exportUpload({
+        rootCid,
+        backend,
+        queue,
+        manifest,
+        fetcher: new GatewayFetcher('http://gateway.test'),
+        gatewayUrl: 'http://gateway.test',
+      })
+
+      expect(repaired).toBe(true)
+      expect(queue.getStatus(rootCid, 'repairable')).toBe('complete')
+    } finally {
+      fromIterableSpy.mockRestore()
+      globalThis.fetch = originalFetch
+    }
+  })
 })
