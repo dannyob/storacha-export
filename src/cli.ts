@@ -35,7 +35,7 @@ async function _main(argv: string[]) {
   program
     .name('storacha-export')
     .description('Export Storacha space content to storage backends')
-    .version('2.0.0')
+    .version('3.0.0')
     .option('--backend <type...>', 'Backend(s): kubo, local')
     .option('--output <dir>', 'Output directory (local backend)')
     .option('--kubo-api <url>', 'Kubo API endpoint (URL or multiaddr)', 'http://127.0.0.1:5001')

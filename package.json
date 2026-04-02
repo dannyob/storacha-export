@@ -1,6 +1,6 @@
 {
   "name": "storacha-export",
-  "version": "2.0.0",
+  "version": "3.0.0",
   "description": "Export Storacha space content to pluggable storage backends",
   "type": "module",
   "bin": {
