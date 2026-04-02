@@ -163,7 +163,7 @@ export async function discoverShards(
           store.markFetched(blob.cid, space.did, false)
         }
       } catch (err: any) {
-        log('WARN', `  Failed to fetch/parse blob ${blob.cid.slice(0, 20)}...: ${err.message}`)
+        log('INFO', `  Failed to fetch/parse blob ${blob.cid.slice(0, 20)}...: ${err.message}`)
         store.markFetched(blob.cid, space.did, false)
       }
     }

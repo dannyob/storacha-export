@@ -11,7 +11,7 @@ import { log } from '../util/log.js'
 export function cidFromBlobDigest(multihashBytes: Uint8Array): CID | null {
   const [code, codeLen] = varint.decode(multihashBytes)
   if (code !== 0x12) {
-    log('WARN', `Skipping blob with non-sha256 hash code: 0x${code.toString(16)}`)
+    log('INFO', `Skipping blob with non-sha256 hash code: 0x${code.toString(16)}`)
     return null
   }
   const [digestLen, lenLen] = varint.decode(multihashBytes, codeLen)
