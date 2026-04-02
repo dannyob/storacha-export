@@ -30,6 +30,7 @@ export class UploadQueue {
   private _get: Database.Statement
   private _getPending: Database.Statement
   private _resetForRetry: Database.Statement
+  private _requeueCompleteWithMissing: Database.Statement
   private _getStats: Database.Statement
   private _getComplete: Database.Statement
   private _getActiveJobs: Database.Statement
@@ -66,6 +67,19 @@ export class UploadQueue {
     this._resetForRetry = db.prepare(`
       UPDATE uploads SET status = 'pending', error_msg = NULL, updated_at = datetime('now')
       WHERE status IN ('error', 'partial', 'downloading', 'repairing')
+    `)
+
+    this._requeueCompleteWithMissing = db.prepare(`
+      UPDATE uploads
+      SET status = 'pending', error_msg = NULL, updated_at = datetime('now')
+      WHERE backend = @backend
+        AND status = 'complete'
+        AND EXISTS (
+          SELECT 1
+          FROM blocks
+          WHERE blocks.root_cid = uploads.root_cid
+            AND blocks.seen = 0
+        )
     `)
 
     this._getStats = db.prepare(`
@@ -145,6 +159,10 @@ export class UploadQueue {
 
   resetForRetry(): number {
     return this._resetForRetry.run().changes
+  }
+
+  requeueCompleteWithMissing(backend: string): number {
+    return this._requeueCompleteWithMissing.run({ backend }).changes
   }
 
   getStats() {

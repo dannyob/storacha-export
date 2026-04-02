@@ -35,14 +35,6 @@ export async function exportUpload(options: ExportUploadOptions): Promise<void> 
   const tag = `[${rootCid.slice(0, 24)}...]`
   let lastError: Error | undefined
 
-  const initialCheck = await backend.verifyDag(rootCid)
-  if (initialCheck.valid) {
-    queue.markComplete(rootCid, backend.name, 0)
-    onProgress?.({ type: 'done', rootCid, bytes: 0 })
-    log('INFO', `${tag} Already complete in ${backend.name}`)
-    return
-  }
-
   const existingProgress = manifest.getProgress(rootCid)
   if (existingProgress.total > 0 && existingProgress.missing > 0) {
     log('INFO', `${tag} Resuming repair: ${existingProgress.seen}/${existingProgress.total} blocks, ${existingProgress.missing} missing`)
@@ -83,6 +75,14 @@ export async function exportUpload(options: ExportUploadOptions): Promise<void> 
 
     // Repair failed — fall through to full download as last resort
     log('INFO', `${tag} Repair incomplete, trying full CAR download`)
+  }
+
+  const initialCheck = await backend.verifyDag(rootCid)
+  if (initialCheck.valid) {
+    queue.markComplete(rootCid, backend.name, 0)
+    onProgress?.({ type: 'done', rootCid, bytes: 0 })
+    log('INFO', `${tag} Already complete in ${backend.name}`)
+    return
   }
 
   queue.setStatus(rootCid, backend.name, 'downloading')
