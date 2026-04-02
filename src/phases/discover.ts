@@ -1,6 +1,9 @@
 import type Database from 'better-sqlite3'
 import { log } from '../util/log.js'
 import { filesize } from '../util/format.js'
+import { cidFromBlobDigest, ShardStore } from '../core/shards.js'
+import { parseIndexBlob } from '../core/index-parser.js'
+import type { GatewayFetcher } from '../core/fetcher.js'
 
 /**
  * Enumerate all uploads across selected spaces.
@@ -93,4 +96,79 @@ export async function collectSpaceSizes(
   }
 
   return sizes
+}
+
+/**
+ * Enumerate blobs via blob.list(), identify and parse index blobs,
+ * and populate the shards table with upload->shard mappings.
+ */
+export async function discoverShards(
+  client: any,
+  spaces: Array<{ did: string; name: string }>,
+  store: ShardStore,
+  fetcher: GatewayFetcher,
+): Promise<void> {
+  for (const space of spaces) {
+    log('INFO', `Discovering shards for ${space.name}...`)
+    client.setCurrentSpace(space.did)
+    let cursor: string | undefined
+    let blobCount = 0
+
+    do {
+      const result = await client.capability.blob.list({ size: 1000, cursor })
+      for (const entry of result.results) {
+        const digestHex = Array.from(entry.blob.digest as Uint8Array)
+          .map((b: number) => b.toString(16).padStart(2, '0')).join('')
+        const cid = cidFromBlobDigest(entry.blob.digest)
+        if (!cid) continue
+
+        store.insertBlob({
+          digest: digestHex,
+          size: entry.blob.size,
+          spaceDid: space.did,
+          cid: cid.toString(),
+          insertedAt: entry.insertedAt || '',
+        })
+        blobCount++
+      }
+      cursor = result.cursor
+    } while (cursor)
+
+    log('INFO', `  ${space.name}: ${blobCount} blobs`)
+
+    const candidates = store.getUnfetchedCandidateIndexes(space.did)
+    let indexCount = 0
+    let multiShardCount = 0
+
+    for (const blob of candidates) {
+      try {
+        const res = await fetcher.fetchShard(blob.cid)
+        const bytes = new Uint8Array(await res.arrayBuffer())
+        const result = await parseIndexBlob(bytes)
+
+        if (result) {
+          store.markFetched(blob.cid, space.did, true)
+          for (let i = 0; i < result.shardCids.length; i++) {
+            store.insertShard({
+              uploadRoot: result.contentRoot,
+              shardCid: result.shardCids[i],
+              shardSize: null,
+              shardOrder: i,
+              spaceDid: space.did,
+            })
+          }
+          indexCount++
+          if (result.shardCids.length > 1) multiShardCount++
+        } else {
+          store.markFetched(blob.cid, space.did, false)
+        }
+      } catch (err: any) {
+        log('WARN', `  Failed to fetch/parse blob ${blob.cid.slice(0, 20)}...: ${err.message}`)
+        store.markFetched(blob.cid, space.did, false)
+      }
+    }
+
+    store.updateShardSizes()
+    log('INFO', `  ${space.name}: ${indexCount} indexes parsed, ${multiShardCount} multi-shard uploads`)
+  }
 }
