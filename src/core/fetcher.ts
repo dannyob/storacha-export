@@ -63,6 +63,10 @@ class RateLimitGate {
   }
 }
 
+/**
+ * One GatewayFetcher should be shared across an export run so its rate-limit
+ * gate coordinates every concurrent upload worker.
+ */
 export class GatewayFetcher {
   readonly dispatcher = carDispatcher
   private rateGate = new RateLimitGate()

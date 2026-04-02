@@ -13,6 +13,7 @@ export interface ExportUploadOptions {
   backend: ExportBackend
   queue: UploadQueue
   manifest: BlockManifest
+  fetcher: GatewayFetcher
   gatewayUrl: string
   maxRetries?: number
   uploadTimeout?: number
@@ -30,9 +31,8 @@ function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise
 }
 
 export async function exportUpload(options: ExportUploadOptions): Promise<void> {
-  const { rootCid, backend, queue, manifest, gatewayUrl, maxRetries = 3, uploadTimeout = 300000, onProgress } = options
+  const { rootCid, backend, queue, manifest, fetcher, gatewayUrl, maxRetries = 3, uploadTimeout = 300000, onProgress } = options
   const tag = `[${rootCid.slice(0, 24)}...]`
-  const fetcher = new GatewayFetcher(gatewayUrl)
   let lastError: Error | undefined
 
   const initialCheck = await backend.verifyDag(rootCid)

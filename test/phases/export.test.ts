@@ -8,6 +8,7 @@ import fs from 'node:fs'
 import type Database from 'better-sqlite3'
 import { CarBlockIterator } from '@ipld/car'
 import type { ExportBackend } from '../../src/backends/interface.js'
+import { GatewayFetcher } from '../../src/core/fetcher.js'
 
 const TEST_DB = '/tmp/storacha-v2-export-phase-test.db'
 
@@ -93,6 +94,60 @@ describe('runExport', () => {
         spaceNames: ['TestSpace'],
       })
 
+      expect(queue.getStatus(root1.cid.toString(), 'memory')).toBe('complete')
+      expect(queue.getStatus(root2.cid.toString(), 'memory')).toBe('complete')
+    } finally {
+      globalThis.fetch = originalFetch
+    }
+  })
+
+  it('creates one GatewayFetcher per export run and reuses it for every upload', async () => {
+    const leaf1 = await makeRawBlock('file-a')
+    const root1 = await makeDagPBNode([leaf1])
+    const car1 = await buildCarBytes([root1, leaf1], [root1])
+
+    const leaf2 = await makeRawBlock('file-b')
+    const root2 = await makeDagPBNode([leaf2])
+    const car2 = await buildCarBytes([root2, leaf2], [root2])
+
+    const carMap = new Map<string, Uint8Array>([
+      [root1.cid.toString(), car1],
+      [root2.cid.toString(), car2],
+    ])
+    const originalFetch = globalThis.fetch
+    globalThis.fetch = vi.fn(async (input: RequestInfo | URL) => {
+      const url = new URL(String(input))
+      const cidMatch = url.pathname.match(/\/ipfs\/([^?]+)/)
+      if (cidMatch && carMap.has(cidMatch[1])) {
+        return new Response(carMap.get(cidMatch[1]), {
+          status: 200,
+          headers: { 'Content-Type': 'application/vnd.ipld.car' },
+        })
+      }
+      return new Response('not found', { status: 404 })
+    }) as any
+    const gatewayUrl = 'http://gateway.test'
+
+    const backend = new MemoryBackend()
+    queue.add({ rootCid: root1.cid.toString(), spaceDid: 'did:key:test', spaceName: 'TestSpace', backend: 'memory' })
+    queue.add({ rootCid: root2.cid.toString(), spaceDid: 'did:key:test', spaceName: 'TestSpace', backend: 'memory' })
+
+    let createFetcherCalls = 0
+    try {
+      await runExport({
+        queue,
+        manifest,
+        backends: [backend],
+        gatewayUrl,
+        concurrency: 2,
+        spaceNames: ['TestSpace'],
+        createFetcher: (url) => {
+          createFetcherCalls++
+          return new GatewayFetcher(url)
+        },
+      })
+
+      expect(createFetcherCalls).toBe(1)
       expect(queue.getStatus(root1.cid.toString(), 'memory')).toBe('complete')
       expect(queue.getStatus(root2.cid.toString(), 'memory')).toBe('complete')
     } finally {
