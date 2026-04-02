@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { runExport } from '../../src/phases/export.js'
 import { UploadQueue } from '../../src/core/queue.js'
 import { BlockManifest } from '../../src/core/manifest.js'
+import { ShardStore } from '../../src/core/shards.js'
 import { createDatabase } from '../../src/core/db.js'
 import { makeRawBlock, makeDagPBNode, buildCarBytes } from '../core/blocks.test.js'
 import fs from 'node:fs'
@@ -17,12 +18,19 @@ class MemoryBackend implements ExportBackend {
   blocks = new Map<string, Uint8Array>()
   pinned = new Set<string>()
   async importCar(rootCid: string, stream: any) {
-    const chunks: Uint8Array[] = []
+    const chunks: any[] = []
     for await (const chunk of stream) chunks.push(chunk)
-    const iterator = await CarBlockIterator.fromIterable(
-      (async function* () { yield new Uint8Array(Buffer.concat(chunks)) })()
-    )
-    for await (const { cid, bytes } of iterator) this.blocks.set(cid.toString(), bytes)
+    if (chunks.length > 0 && chunks[0].cid) {
+      // BlockStream from shard pipeline
+      for (const block of chunks) this.blocks.set(block.cid.toString(), block.bytes)
+    } else {
+      // Raw byte stream from full-DAG pipeline
+      const carBytes = Buffer.concat(chunks)
+      const iterator = await CarBlockIterator.fromIterable(
+        (async function* () { yield new Uint8Array(carBytes) })()
+      )
+      for await (const { cid, bytes } of iterator) this.blocks.set(cid.toString(), bytes)
+    }
     this.pinned.add(rootCid)
   }
   async hasContent(rootCid: string) { return this.pinned.has(rootCid) }
@@ -150,6 +158,47 @@ describe('runExport', () => {
       expect(createFetcherCalls).toBe(1)
       expect(queue.getStatus(root1.cid.toString(), 'memory')).toBe('complete')
       expect(queue.getStatus(root2.cid.toString(), 'memory')).toBe('complete')
+    } finally {
+      globalThis.fetch = originalFetch
+    }
+  })
+
+  it('uses shard path when upload has shard records', async () => {
+    const leaf = await makeRawBlock('shard-leaf')
+    const root = await makeDagPBNode([leaf])
+    const rootCid = root.cid.toString()
+    const shardCar = await buildCarBytes([root, leaf], [root])
+
+    const originalFetch = globalThis.fetch
+    globalThis.fetch = vi.fn(async (input: RequestInfo | URL) => {
+      const url = new URL(String(input))
+      if (url.pathname.includes('bafyshard-export')) {
+        return new Response(shardCar, { status: 200 })
+      }
+      return new Response('not found', { status: 404 })
+    }) as any
+
+    const backend = new MemoryBackend()
+    const shardStore = new ShardStore(db)
+
+    shardStore.insertShard({ uploadRoot: rootCid, shardCid: 'bafyshard-export', shardSize: shardCar.length, shardOrder: 0, spaceDid: 'did:key:test' })
+
+    queue.add({ rootCid, spaceDid: 'did:key:test', spaceName: 'TestSpace', backend: 'memory' })
+
+    try {
+      await runExport({
+        queue,
+        manifest,
+        backends: [backend],
+        gatewayUrl: 'http://gateway.test',
+        concurrency: 1,
+        spaceNames: ['TestSpace'],
+        shardStore,
+      })
+
+      expect(queue.getStatus(rootCid, 'memory')).toBe('complete')
+      expect(backend.blocks.has(root.cid.toString())).toBe(true)
+      expect(backend.blocks.has(leaf.cid.toString())).toBe(true)
     } finally {
       globalThis.fetch = originalFetch
     }

@@ -1,7 +1,9 @@
 import { exportUpload } from '../core/pipeline.js'
+import { exportUploadViaShards } from '../core/shard-pipeline.js'
 import { GatewayFetcher } from '../core/fetcher.js'
 import type { UploadQueue } from '../core/queue.js'
 import type { BlockManifest } from '../core/manifest.js'
+import type { ShardStore } from '../core/shards.js'
 import type { ExportBackend } from '../backends/interface.js'
 import { log } from '../util/log.js'
 
@@ -12,12 +14,13 @@ export interface ExportOptions {
   gatewayUrl: string
   concurrency?: number
   spaceNames?: string[]
+  shardStore?: ShardStore
   createFetcher?: (gatewayUrl: string) => GatewayFetcher
   onProgress?: (info: { type: string; [key: string]: any }) => void
 }
 
 export async function runExport(options: ExportOptions): Promise<void> {
-  const { queue, manifest, backends, gatewayUrl, concurrency = 1, spaceNames, createFetcher = (url) => new GatewayFetcher(url), onProgress } = options
+  const { queue, manifest, backends, gatewayUrl, concurrency = 1, spaceNames, shardStore, createFetcher = (url) => new GatewayFetcher(url), onProgress } = options
   const fetcher = createFetcher(gatewayUrl)
 
   for (const backend of backends) {
@@ -40,15 +43,27 @@ export async function runExport(options: ExportOptions): Promise<void> {
       while (idx < pending.length) {
         const upload = pending[idx++]
         onProgress?.({ type: 'downloading', rootCid: upload.root_cid, spaceName: upload.space_name })
-        await exportUpload({
-          rootCid: upload.root_cid,
-          backend,
-          queue,
-          manifest,
-          fetcher,
-          gatewayUrl,
-          onProgress: onProgress && ((info) => onProgress({ ...info, spaceName: upload.space_name })),
-        })
+
+        if (shardStore && shardStore.getShardsForUpload(upload.root_cid).length > 0) {
+          await exportUploadViaShards({
+            rootCid: upload.root_cid,
+            backend,
+            queue,
+            shardStore,
+            fetcher,
+            onProgress: onProgress && ((info) => onProgress({ ...info, spaceName: upload.space_name })),
+          })
+        } else {
+          await exportUpload({
+            rootCid: upload.root_cid,
+            backend,
+            queue,
+            manifest,
+            fetcher,
+            gatewayUrl,
+            onProgress: onProgress && ((info) => onProgress({ ...info, spaceName: upload.space_name })),
+          })
+        }
       }
     }
 
