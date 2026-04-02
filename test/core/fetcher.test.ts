@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { GatewayFetcher } from '../../src/core/fetcher.js'
 import { blockStreamToArray } from '../../src/core/blocks.js'
 import http from 'node:http'
@@ -39,5 +39,73 @@ describe('GatewayFetcher', () => {
     const stream = await fetcher.fetchCar(rootCidStr)
     const blocks = await blockStreamToArray(stream)
     expect(blocks).toHaveLength(3)
+  })
+
+  it('shares rate-limit backoff across concurrent fetches', async () => {
+    const otherLeaf = await makeRawBlock('other-data')
+    const otherRoot = await makeDagPBNode([otherLeaf])
+    const otherCarBytes = await buildCarBytes([otherRoot, otherLeaf], [otherRoot])
+
+    const originalFetch = globalThis.fetch
+    const randomSpy = vi.spyOn(Math, 'random').mockReturnValue(0)
+    vi.useFakeTimers()
+
+    let firstRateLimited = false
+    globalThis.fetch = vi.fn(async (input: RequestInfo | URL) => {
+      const url = new URL(String(input))
+      const cid = url.pathname.match(/\/ipfs\/([^?]+)/)?.[1]
+
+      if (cid === rootCidStr && !firstRateLimited) {
+        firstRateLimited = true
+        return new Response('slow down', {
+          status: 429,
+          headers: { 'retry-after': '1' },
+        })
+      }
+
+      if (cid === rootCidStr) {
+        return new Response(carBytes, {
+          status: 200,
+          headers: { 'Content-Type': 'application/vnd.ipld.car' },
+        })
+      }
+
+      if (cid === otherRoot.cid.toString()) {
+        return new Response(otherCarBytes, {
+          status: 200,
+          headers: { 'Content-Type': 'application/vnd.ipld.car' },
+        })
+      }
+
+      return new Response('not found', { status: 404 })
+    }) as any
+
+    const fetcher = new GatewayFetcher('http://gateway.test')
+
+    try {
+      const first = fetcher.fetchCar(rootCidStr)
+      await vi.advanceTimersByTimeAsync(0)
+
+      const second = fetcher.fetchCar(otherRoot.cid.toString())
+      await vi.advanceTimersByTimeAsync(0)
+
+      expect(globalThis.fetch).toHaveBeenCalledTimes(1)
+
+      await vi.advanceTimersByTimeAsync(1000)
+
+      const [firstStream, secondStream] = await Promise.all([first, second])
+      const [firstBlocks, secondBlocks] = await Promise.all([
+        blockStreamToArray(firstStream),
+        blockStreamToArray(secondStream),
+      ])
+
+      expect(firstBlocks).toHaveLength(3)
+      expect(secondBlocks).toHaveLength(2)
+      expect(globalThis.fetch).toHaveBeenCalledTimes(3)
+    } finally {
+      globalThis.fetch = originalFetch
+      randomSpy.mockRestore()
+      vi.useRealTimers()
+    }
   })
 })

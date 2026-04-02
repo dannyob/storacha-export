@@ -261,4 +261,101 @@ describe('exportUpload', () => {
       globalThis.fetch = originalFetch
     }
   })
+
+  it('waits for tracking to finish before resetting seen flags for a retry', async () => {
+    const leaf = await makeRawBlock('retry-leaf')
+    const root = await makeDagPBNode([leaf])
+    const rootCid = root.cid.toString()
+    const truncatedCar = await buildCarBytes([root], [root])
+
+    const originalFetch = globalThis.fetch
+    vi.useFakeTimers()
+
+    let attempt = 0
+    globalThis.fetch = vi.fn(async (input: RequestInfo | URL) => {
+      const url = new URL(String(input))
+      if (url.pathname === `/ipfs/${rootCid}` && url.searchParams.get('format') === 'car') {
+        attempt++
+        if (attempt === 1) {
+          return new Response(truncatedCar, {
+            status: 200,
+            headers: { 'Content-Type': 'application/vnd.ipld.car' },
+          })
+        }
+        return new Response('not found', { status: 404 })
+      }
+      if (url.pathname === `/ipfs/${rootCid}` && url.searchParams.get('format') === 'raw') {
+        return new Response(root.bytes, {
+          status: 200,
+          headers: { 'Content-Type': 'application/octet-stream' },
+        })
+      }
+      if (url.pathname === `/ipfs/${leaf.cid.toString()}` && url.searchParams.get('format') === 'raw') {
+        return new Response(leaf.bytes, {
+          status: 200,
+          headers: { 'Content-Type': 'application/octet-stream' },
+        })
+      }
+      return new Response('not found', { status: 404 })
+    }) as any
+
+    const fromIterableSpy = vi.spyOn(CarBlockIterator, 'fromIterable').mockImplementation(async () => {
+      return (async function* () {
+        await new Promise(resolve => setTimeout(resolve, 25))
+        yield { cid: root.cid, bytes: root.bytes }
+      })() as any
+    })
+
+    let importCalls = 0
+    const repairedCids = new Set<string>()
+    const repairingTotals: number[] = []
+    const backend: ExportBackend = {
+      name: 'flaky',
+      async importCar(_rootCid: string, stream: any): Promise<void> {
+        importCalls++
+        for await (const _chunk of stream) {}
+        if (importCalls === 1) throw new Error('fail first attempt')
+      },
+      async verifyDag(): Promise<{ valid: boolean; error?: string }> {
+        return repairedCids.has(rootCid) && repairedCids.has(leaf.cid.toString())
+          ? { valid: true }
+          : { valid: false, error: 'missing blocks' }
+      },
+      async putBlock(cid: string): Promise<void> {
+        repairedCids.add(cid)
+      },
+    }
+
+    queue.add({ rootCid, spaceDid: 'did:key:test', spaceName: 'Test', backend: 'flaky' })
+
+    try {
+      const exportPromise = exportUpload({
+        rootCid,
+        backend,
+        queue,
+        manifest,
+        fetcher: new GatewayFetcher('http://gateway.test'),
+        gatewayUrl: 'http://gateway.test',
+        maxRetries: 2,
+        onProgress: (info) => {
+          if (info.type === 'repairing') repairingTotals.push(info.totalBlocks)
+        },
+      })
+
+      await vi.advanceTimersByTimeAsync(0)
+      await vi.advanceTimersByTimeAsync(25)
+      await vi.advanceTimersByTimeAsync(5000)
+      await exportPromise
+
+      expect(importCalls).toBe(1)
+      expect(repairingTotals[0]).toBe(2)
+      expect(queue.getStatus(rootCid, 'flaky')).toBe('complete')
+      expect(repairedCids.has(rootCid)).toBe(true)
+      expect(repairedCids.has(leaf.cid.toString())).toBe(true)
+    } finally {
+      fromIterableSpy.mockRestore()
+      globalThis.fetch = originalFetch
+      vi.useRealTimers()
+    }
+  })
 })
