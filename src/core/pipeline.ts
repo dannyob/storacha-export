@@ -91,6 +91,7 @@ export async function exportUpload(options: ExportUploadOptions): Promise<void> 
   for (let attempt = 1; attempt <= maxRetries; attempt++) {
     const abortController = new AbortController()
     let cleanupStreams: (() => void) | undefined
+    let trackingPromise: Promise<void> | undefined
 
     try {
       // Wait for rate gate before fetching — coordinates with repair workers
@@ -156,7 +157,7 @@ export async function exportUpload(options: ExportUploadOptions): Promise<void> 
       }
 
       // Track blocks in parallel — if tracking fails/stalls, unpipe it so backend isn't blocked
-      const trackingPromise = (async () => {
+      trackingPromise = (async () => {
         try {
           const iterator = await CarBlockIterator.fromIterable(trackingStream)
           for await (const { cid, bytes } of iterator) {
@@ -201,6 +202,10 @@ export async function exportUpload(options: ExportUploadOptions): Promise<void> 
         return
       }
 
+      // Repair decisions depend on manifest state, so wait for tracking to finish
+      // before falling through to the post-download repair path.
+      await trackingPromise
+
       // Import succeeded but verification failed — mark partial, will repair
       queue.setStatus(rootCid, backend.name, 'partial')
       lastError = new Error(verifyResult.error || 'DAG verification failed after import')
@@ -209,6 +214,7 @@ export async function exportUpload(options: ExportUploadOptions): Promise<void> 
     } catch (err: any) {
       lastError = err
       cleanupStreams?.()
+      await trackingPromise?.catch(() => {})
       if (attempt < maxRetries) {
         // Reset seen flags between retries — tee may have recorded blocks the backend didn't get
         // But keep DAG links so next attempt's tracking builds on known structure
