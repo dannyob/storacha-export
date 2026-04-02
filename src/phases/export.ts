@@ -21,6 +21,11 @@ export async function runExport(options: ExportOptions): Promise<void> {
   const fetcher = createFetcher(gatewayUrl)
 
   for (const backend of backends) {
+    const requeued = queue.requeueCompleteWithMissing(backend.name)
+    if (requeued > 0) {
+      log('INFO', `Requeued ${requeued} complete ${backend.name} job(s) with manifest debt`)
+    }
+
     const pending = spaceNames
       ? queue.getPendingForSpaces(backend.name, spaceNames)
       : queue.getPending(backend.name)

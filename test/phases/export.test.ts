@@ -154,4 +154,57 @@ describe('runExport', () => {
       globalThis.fetch = originalFetch
     }
   })
+
+  it('requeues complete uploads with manifest debt and resumes repair before trusting verifyDag', async () => {
+    const leaf = await makeRawBlock('missing-leaf')
+    const root = await makeDagPBNode([leaf])
+    const rootCid = root.cid.toString()
+
+    const originalFetch = globalThis.fetch
+    globalThis.fetch = vi.fn(async (input: RequestInfo | URL) => {
+      const url = new URL(String(input))
+      if (url.pathname === `/ipfs/${leaf.cid.toString()}` && url.searchParams.get('format') === 'raw') {
+        return new Response(leaf.bytes, {
+          status: 200,
+          headers: { 'Content-Type': 'application/octet-stream' },
+        })
+      }
+      return new Response('not found', { status: 404 })
+    }) as any
+
+    let repairedCid: string | undefined
+    const backend: ExportBackend = {
+      name: 'repairable',
+      async importCar(): Promise<void> {
+        throw new Error('importCar should not run when resuming manifest debt')
+      },
+      async verifyDag(): Promise<{ valid: boolean; error?: string }> {
+        return { valid: true }
+      },
+      async putBlock(cid: string, _bytes: Uint8Array): Promise<void> {
+        repairedCid = cid
+      },
+    }
+
+    queue.add({ rootCid, spaceDid: 'did:key:test', spaceName: 'TestSpace', backend: 'repairable' })
+    queue.markComplete(rootCid, 'repairable', 123)
+    manifest.markSeen(rootCid, rootCid, root.cid.code)
+    manifest.addLink(rootCid, leaf.cid.toString(), leaf.cid.code, rootCid)
+
+    try {
+      await runExport({
+        queue,
+        manifest,
+        backends: [backend],
+        gatewayUrl: 'http://gateway.test',
+        concurrency: 1,
+        spaceNames: ['TestSpace'],
+      })
+
+      expect(repairedCid).toBe(leaf.cid.toString())
+      expect(queue.getStatus(rootCid, 'repairable')).toBe('complete')
+    } finally {
+      globalThis.fetch = originalFetch
+    }
+  })
 })
