@@ -38,6 +38,28 @@ export function createDatabase(path: string): Database.Database {
       total_bytes INTEGER,
       enumerated_at TEXT
     );
+
+    CREATE TABLE IF NOT EXISTS blobs (
+      digest TEXT NOT NULL,
+      size INTEGER NOT NULL,
+      space_did TEXT NOT NULL,
+      cid TEXT NOT NULL,
+      is_index INTEGER DEFAULT 0,
+      fetched INTEGER DEFAULT 0,
+      inserted_at TEXT,
+      PRIMARY KEY (digest, space_did)
+    );
+
+    CREATE TABLE IF NOT EXISTS shards (
+      upload_root TEXT NOT NULL,
+      shard_cid TEXT NOT NULL,
+      shard_size INTEGER,
+      shard_order INTEGER NOT NULL,
+      space_did TEXT NOT NULL,
+      PRIMARY KEY (upload_root, shard_cid)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_shards_root ON shards(upload_root);
   `)
 
   return db

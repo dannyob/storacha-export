@@ -24,6 +24,33 @@ describe('createDatabase', () => {
     db.close()
   })
 
+  it('creates blobs and shards tables', () => {
+    const db = createDatabase(TEST_DB)
+    const tables = db.prepare(
+      "SELECT name FROM sqlite_master WHERE type='table' ORDER BY name"
+    ).all().map((r: any) => r.name)
+
+    expect(tables).toContain('blobs')
+    expect(tables).toContain('shards')
+    db.close()
+  })
+
+  it('blobs table enforces NOT NULL on cid', () => {
+    const db = createDatabase(TEST_DB)
+    expect(() => {
+      db.prepare(
+        "INSERT INTO blobs (digest, size, space_did, cid) VALUES ('abc', 100, 'did:key:z', 'bafyabc')"
+      ).run()
+    }).not.toThrow()
+
+    expect(() => {
+      db.prepare(
+        "INSERT INTO blobs (digest, size, space_did) VALUES ('def', 100, 'did:key:z')"
+      ).run()
+    }).toThrow()
+    db.close()
+  })
+
   it('is idempotent — second call does not error', () => {
     const db1 = createDatabase(TEST_DB)
     db1.close()
