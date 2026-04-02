@@ -7,7 +7,7 @@ Export your Storacha / web3.storage space content to local files or IPFS (Kubo).
 storacha-export runs in three phases:
 
 1. **Discover** -- detect credentials, enumerate spaces and uploads, cache space metadata in SQLite.
-2. **Export** -- download CARs from the Storacha gateway, with inline repair for truncated downloads.
+2. **Export** -- ask the target backend whether the DAG is already complete, otherwise download CARs from the Storacha gateway with inline repair for truncated downloads.
 3. **Verify** -- confirm every exported upload is actually present and complete in each backend.
 
 ### Inline repair
@@ -26,11 +26,11 @@ Each upload moves through: `pending -> downloading -> partial -> repairing -> co
 
 ### `local` -- CAR files on disk
 
-Writes each upload as a CAR file in an output directory. On repair, reads the existing truncated CAR from disk, fetches missing blocks, and writes a complete replacement.
+Writes each upload as a CAR file in an output directory. On repair, reads the existing truncated CAR from disk, fetches missing blocks, and writes a complete replacement. Completeness means the root CID is present and every reachable block in the DAG is present in the CAR.
 
 ### `kubo` -- IPFS node
 
-Streams raw CAR bytes directly to kubo's `dag/import` endpoint. Repair pushes individual blocks via `block/put`. Verification uses `dag/stat` for full DAG traversal.
+Streams raw CAR bytes directly to kubo's `dag/import` endpoint. Repair pushes individual blocks via `block/put`. Completeness is checked with `dag/stat`, not just root pin existence.
 
 ## Dashboard
 
@@ -90,7 +90,7 @@ storacha-export --serve 0.0.0.0:8087 --html-out /var/www/export.html --backend k
 
 | Option | Description |
 |--------|-------------|
-| `--backend <type>` | Backend: `local` or `kubo` |
+| `--backend <type...>` | Backend(s): `local` or `kubo` |
 | `--output <dir>` | Output directory (local backend) |
 | `--kubo-api <url>` | Kubo API endpoint (URL or multiaddr, default: `http://127.0.0.1:5001`) |
 | `--space <name...>` | Export only named spaces (repeatable) |
@@ -106,7 +106,7 @@ storacha-export --serve 0.0.0.0:8087 --html-out /var/www/export.html --backend k
 
 ## Resume
 
-Export progress is tracked in a SQLite database (`storacha-export.db`). If an export is interrupted, re-run the same command -- it picks up where it left off automatically, including mid-upload progress at the block level.
+Export progress is tracked in a SQLite database (`storacha-export.db`). If an export is interrupted, re-run the same command -- it picks up where it left off automatically, including mid-upload progress at the block level. Existing backend data is re-checked with backend verification before any upload is treated as complete.
 
 Use `--fresh` to start over. This resets the progress tracking only; data already exported to backends is not affected.
 

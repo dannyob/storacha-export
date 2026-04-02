@@ -109,39 +109,36 @@ interface ExportBackend {
   init?(): Promise<void>
   close?(): Promise<void>
 
-  // Happy path: import a stream of blocks (from a CAR or individually)
-  importCar(rootCid: string, blocks: BlockStream): Promise<void>
+  // Happy path: import a CAR byte stream or block stream
+  importCar(
+    rootCid: string,
+    stream: BlockStream | AsyncIterable<Uint8Array> | NodeJS.ReadableStream
+  ): Promise<void>
 
-  // Verification
-  hasContent(rootCid: string): Promise<boolean>
+  // Cheap existence/pinning check
+  hasContent?(rootCid: string): Promise<boolean>
 
   // Block-level operations (optional, for repair)
   hasBlock?(cid: string): Promise<boolean>
-  putBlock?(cid: string, bytes: Uint8Array): Promise<void>
+  putBlock?(cid: string, bytes: Uint8Array, rootCid?: string): Promise<void>
 
-  // Full repair override (optional — local backend needs a different strategy)
-  repair?(rootCid: string, manifest: BlockManifest, fetchBlock: (cid: string) => Promise<Uint8Array>): Promise<boolean>
-
-  // Deep verification (optional)
-  verifyDag?(rootCid: string): Promise<{ valid: boolean; error?: string }>
+  // Deep verification (authoritative completion check)
+  verifyDag(rootCid: string): Promise<{ valid: boolean; error?: string }>
 }
 ```
 
 ### Kubo backend
-- `importCar`: wraps BlockStream back into a CAR, streams via multipart to `dag/import`
+- `importCar`: streams CAR bytes via multipart to `dag/import`
 - `hasBlock`: `POST /api/v0/block/stat?arg=<cid>`
 - `putBlock`: `POST /api/v0/block/put` with multipart
-- `hasContent`: `POST /api/v0/pin/ls?arg=<cid>&type=recursive`
+- `hasContent`: optional pin/existence hint via `POST /api/v0/pin/ls?arg=<cid>&type=recursive`
 - `verifyDag`: `POST /api/v0/dag/stat?arg=<cid>` — verifies full DAG traversal
 
 ### Local backend
-- `importCar`: writes blocks to a CAR file on disk
-- `hasContent`: file exists check
-- `repair`: reads the existing truncated CAR from disk (no re-download), identifies missing blocks, fetches them, writes a complete replacement CAR
-- `verifyDag`: parse the CAR file with `@ipld/car`, verify all blocks and root
-
-### Cluster backend
-- Same as kubo but via cluster REST API
+- `importCar`: writes CAR bytes to disk
+- `hasContent`: optional file-exists hint
+- `putBlock`: appends fetched blocks to a repair sidecar CAR keyed by `rootCid`
+- `verifyDag`: parse the CAR file with `@ipld/car`, walk the root-reachable DAG, and require every reachable block to be present
 
 ## Phases and Dashboard
 
@@ -155,7 +152,9 @@ The tool runs in three phases, reflected in the dashboard:
 Dashboard shows: spaces found, upload counts per space.
 
 ### Phase 2: Export
+- For each pending upload, call `verifyDag(rootCid)` first. If it passes, mark the upload complete without downloading.
 - Download CARs with inline repair
+- Use one shared gateway fetch coordinator for the whole export run so 429 backoff is global across concurrent workers
 - Each upload's lifecycle is visible individually:
   ```
   Smithsonian/bafybeic3yr... → Downloading (1400/? blocks, 1.2 GiB)
@@ -175,9 +174,9 @@ Dashboard shows: spaces found, upload counts per space.
 All phases show the live log panel at the bottom with color-coded structured logging (timestamps, PIDs, levels).
 
 ### Dashboard Server
-- `--serve [host:port]` — built-in HTTP server (default: `127.0.0.1`, random port)
+- `--serve [host:port]` — built-in HTTP server (default: `127.0.0.1:9000`)
 - `--serve-password <pass>` — HTTP Basic Auth
-- `--html-out <path>` — write static HTML snapshot every 5s for external web servers
+- `--html-out <path>` — write static HTML snapshot every 2s for external web servers
 - Auto-refresh via meta tag
 - PID displayed (not "Running/Stopped" — the server IS the process)
 
@@ -203,9 +202,6 @@ storacha-export --fresh --backend kubo ...
 # Verify only (skip export, just check)
 storacha-export --verify --backend kubo ...
 
-# Dry run
-storacha-export --dry-run
-
 # Dashboard
 storacha-export --serve 0.0.0.0:8087 --html-out /var/www/export.html ...
 ```
@@ -214,10 +210,11 @@ Auto-resume is the default when a DB exists. No `--continue` flag.
 
 ## Concurrency and Politeness
 
-- Default: 1 concurrent transfer
+- Default: 3 concurrent transfers
 - `--concurrency N` for parallel downloads
+- One shared `GatewayFetcher` coordinates all concurrent workers in an export run
 - Exponential backoff on 429/5xx, respects `Retry-After`
-- Body timeout: 10 minutes between chunks (stalled connections should retry, not hang forever; but long enough to avoid killing slow transfers)
+- CAR fetch timeout: 60s for headers, 2 minutes between chunks; block fetch timeout: 30s
 - Cancel response bodies on error to prevent socket pool exhaustion
 
 ## Streaming Rules
@@ -248,8 +245,7 @@ storacha-export/
 │   ├── backends/
 │   │   ├── interface.ts  # ExportBackend type definition
 │   │   ├── kubo.ts
-│   │   ├── local.ts
-│   │   └── cluster.ts
+│   │   └── local.ts
 │   ├── dashboard/
 │   │   ├── server.ts     # HTTP server with auth
 │   │   └── html.ts       # HTML generator
