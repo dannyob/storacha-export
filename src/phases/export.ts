@@ -1,4 +1,5 @@
 import { exportUpload } from '../core/pipeline.js'
+import { GatewayFetcher } from '../core/fetcher.js'
 import type { UploadQueue } from '../core/queue.js'
 import type { BlockManifest } from '../core/manifest.js'
 import type { ExportBackend } from '../backends/interface.js'
@@ -11,11 +12,13 @@ export interface ExportOptions {
   gatewayUrl: string
   concurrency?: number
   spaceNames?: string[]
+  createFetcher?: (gatewayUrl: string) => GatewayFetcher
   onProgress?: (info: { type: string; [key: string]: any }) => void
 }
 
 export async function runExport(options: ExportOptions): Promise<void> {
-  const { queue, manifest, backends, gatewayUrl, concurrency = 1, spaceNames, onProgress } = options
+  const { queue, manifest, backends, gatewayUrl, concurrency = 1, spaceNames, createFetcher = (url) => new GatewayFetcher(url), onProgress } = options
+  const fetcher = createFetcher(gatewayUrl)
 
   for (const backend of backends) {
     const pending = spaceNames
@@ -37,6 +40,7 @@ export async function runExport(options: ExportOptions): Promise<void> {
           backend,
           queue,
           manifest,
+          fetcher,
           gatewayUrl,
           onProgress: onProgress && ((info) => onProgress({ ...info, spaceName: upload.space_name })),
         })
