@@ -108,4 +108,31 @@ describe('GatewayFetcher', () => {
       vi.useRealTimers()
     }
   })
+
+  it('fetches a shard and returns a Response', async () => {
+    const leaf = await makeRawBlock('shard-data')
+    const shardCar = await buildCarBytes([leaf], [leaf])
+
+    const rawServer = http.createServer((req, res) => {
+      const url = new URL(req.url!, `http://${req.headers.host}`)
+      if (url.searchParams.get('format') === 'raw') {
+        res.writeHead(200, { 'Content-Type': 'application/octet-stream' })
+        res.end(shardCar)
+      } else {
+        res.writeHead(404); res.end()
+      }
+    })
+    await new Promise<void>(resolve => rawServer.listen(0, resolve))
+    const rawUrl = `http://127.0.0.1:${(rawServer.address() as any).port}`
+
+    try {
+      const fetcher = new GatewayFetcher(rawUrl)
+      const res = await fetcher.fetchShard(leaf.cid.toString())
+      expect(res.ok).toBe(true)
+      const bytes = new Uint8Array(await res.arrayBuffer())
+      expect(bytes.length).toBe(shardCar.length)
+    } finally {
+      await new Promise<void>(resolve => rawServer.close(() => resolve()))
+    }
+  })
 })

@@ -180,4 +180,41 @@ export class GatewayFetcher {
     throw new Error('Block fetch failed after retries')
   }
 
+  /**
+   * Fetch a shard blob by CID. Returns the raw HTTP Response.
+   * The response body is the raw blob content (a valid CAR file for data shards).
+   * Uses carDispatcher since shards can be up to 128MB.
+   */
+  async fetchShard(cidStr: string, maxRetries = 3): Promise<Response> {
+    const url = `${this.gatewayUrl.replace(/\/$/, '')}/ipfs/${cidStr}?format=raw`
+
+    for (let attempt = 0; attempt < maxRetries; attempt++) {
+      await this.rateGate.wait()
+
+      const res = await fetch(url, { dispatcher: carDispatcher } as any)
+
+      if (res.status === 429) {
+        await res.body?.cancel()
+        this.rateGate.backoff(res.headers.get('retry-after'))
+        continue
+      }
+
+      if (res.status >= 500) {
+        await res.body?.cancel()
+        const delay = Math.min(2000 * Math.pow(2, attempt), 30000)
+        log('RETRY', `Shard ${cidStr.slice(0, 20)}... HTTP ${res.status}, waiting ${Math.round(delay / 1000)}s`)
+        await new Promise(r => setTimeout(r, delay))
+        continue
+      }
+
+      if (!res.ok) {
+        await res.body?.cancel()
+        throw new Error(`Shard fetch failed: HTTP ${res.status} ${res.statusText}`)
+      }
+
+      return res
+    }
+    throw new Error(`Shard fetch failed after ${maxRetries} attempts: ${cidStr}`)
+  }
+
 }
