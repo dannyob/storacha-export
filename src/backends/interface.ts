@@ -9,8 +9,8 @@ export interface ExportBackend {
   /** Import CAR data — accepts raw CAR byte stream or a BlockStream */
   importCar(rootCid: string, stream: BlockStream | AsyncIterable<Uint8Array> | NodeJS.ReadableStream): Promise<void>
 
-  /** Check if a root CID is fully stored (pinned) */
-  hasContent(rootCid: string): Promise<boolean>
+  /** Cheap existence/pinning check */
+  hasContent?(rootCid: string): Promise<boolean>
 
   /** Check if an individual block exists in the store */
   hasBlock?(cid: string): Promise<boolean>
@@ -19,5 +19,5 @@ export interface ExportBackend {
   putBlock?(cid: string, bytes: Uint8Array, rootCid?: string): Promise<void>
 
   /** Deep verification — check that the full DAG is traversable */
-  verifyDag?(rootCid: string): Promise<{ valid: boolean; error?: string }>
+  verifyDag(rootCid: string): Promise<{ valid: boolean; error?: string }>
 }

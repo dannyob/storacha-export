@@ -57,17 +57,25 @@ describe('runVerify', () => {
     expect(queue.getStatus('bafyA', 'mock')).toBe('partial')
   })
 
-  it('falls back to hasContent when verifyDag not available', async () => {
+  it('uses verifyDag as the source of truth during verification', async () => {
     queue.add({ rootCid: 'bafyA', spaceDid: 'did:key:test', spaceName: 'S1', backend: 'mock' })
     queue.markComplete('bafyA', 'mock', 100)
 
+    let verifyCalls = 0
     const backend: ExportBackend = {
       name: 'mock',
       async importCar() {},
       async hasContent() { return true },
+      async verifyDag() {
+        verifyCalls++
+        return { valid: false, error: 'missing blocks' }
+      },
     }
 
     const result = await runVerify({ queue, backends: [backend] })
-    expect(result.verified).toBe(1)
+    expect(verifyCalls).toBe(1)
+    expect(result.verified).toBe(0)
+    expect(result.failed).toBe(1)
+    expect(queue.getStatus('bafyA', 'mock')).toBe('partial')
   })
 })

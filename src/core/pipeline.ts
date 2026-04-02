@@ -33,13 +33,13 @@ export async function exportUpload(options: ExportUploadOptions): Promise<void> 
   const { rootCid, backend, queue, manifest, gatewayUrl, maxRetries = 3, uploadTimeout = 300000, onProgress } = options
   const tag = `[${rootCid.slice(0, 24)}...]`
   const fetcher = new GatewayFetcher(gatewayUrl)
+  let lastError: Error | undefined
 
-  // Check if we already have partial manifest data — skip straight to repair
-  // Quick check: if backend already has it pinned, skip everything
-  if (await backend.hasContent(rootCid)) {
+  const initialCheck = await backend.verifyDag(rootCid)
+  if (initialCheck.valid) {
     queue.markComplete(rootCid, backend.name, 0)
     onProgress?.({ type: 'done', rootCid, bytes: 0 })
-    log('INFO', `${tag} Already pinned in ${backend.name}`)
+    log('INFO', `${tag} Already complete in ${backend.name}`)
     return
   }
 
@@ -68,12 +68,16 @@ export async function exportUpload(options: ExportUploadOptions): Promise<void> 
           await (backend as any).mergeRepairCar(rootCid)
         }
 
-        if (await backend.hasContent(rootCid)) {
+        const verifyResult = await backend.verifyDag(rootCid)
+        if (verifyResult.valid) {
           queue.markComplete(rootCid, backend.name, 0)
           onProgress?.({ type: 'done', rootCid, bytes: 0 })
           log('REPAIR', `${tag} Repaired and verified`)
           return
         }
+
+        queue.setStatus(rootCid, backend.name, 'partial')
+        lastError = new Error(verifyResult.error || 'DAG verification failed after repair')
       }
     }
 
@@ -84,7 +88,6 @@ export async function exportUpload(options: ExportUploadOptions): Promise<void> 
   queue.setStatus(rootCid, backend.name, 'downloading')
 
   // Attempt to download the full CAR — stream raw bytes directly to backend
-  let lastError: Error | undefined
   for (let attempt = 1; attempt <= maxRetries; attempt++) {
     const abortController = new AbortController()
     let cleanupStreams: (() => void) | undefined
@@ -190,16 +193,17 @@ export async function exportUpload(options: ExportUploadOptions): Promise<void> 
       // Don't await trackingPromise — if backend finished, tracking can finish in background
       trackingPromise.catch(() => {})
 
-      // Success — verify it's pinned
-      if (await backend.hasContent(rootCid)) {
+      // Success — verify the backend can traverse the full DAG
+      const verifyResult = await backend.verifyDag(rootCid)
+      if (verifyResult.valid) {
         queue.markComplete(rootCid, backend.name, byteCount)
         onProgress?.({ type: 'done', rootCid, bytes: byteCount })
         return
       }
 
-      // Import succeeded but pin failed — mark partial, will repair
+      // Import succeeded but verification failed — mark partial, will repair
       queue.setStatus(rootCid, backend.name, 'partial')
-      lastError = new Error('Import succeeded but root not pinned')
+      lastError = new Error(verifyResult.error || 'DAG verification failed after import')
       break
 
     } catch (err: any) {
@@ -249,12 +253,16 @@ export async function exportUpload(options: ExportUploadOptions): Promise<void> 
           await (backend as any).mergeRepairCar(rootCid)
         }
 
-        if (await backend.hasContent(rootCid)) {
+        const verifyResult = await backend.verifyDag(rootCid)
+        if (verifyResult.valid) {
           queue.markComplete(rootCid, backend.name, 0)
           onProgress?.({ type: 'done', rootCid, bytes: 0 })
           log('REPAIR', `${tag} Repaired and verified`)
           return
         }
+
+        queue.setStatus(rootCid, backend.name, 'partial')
+        lastError = new Error(verifyResult.error || 'DAG verification failed after repair')
       }
     }
   }

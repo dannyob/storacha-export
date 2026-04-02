@@ -356,33 +356,6 @@ async function _main(argv: string[]) {
   if (batch.length > 0) queue.addBatch(batch)
   statusMessage = `Enumerated ${enumCount} uploads`
   addLogLine(`Enumeration complete: ${enumCount} uploads queued`)
-
-  // --- Quick sweep: check which root CIDs the backend already has ---
-  for (const backend of backends) {
-    const pending = queue.getPending(backend.name)
-    if (pending.length === 0) continue
-    statusMessage = `Checking ${backend.name} for existing content (${pending.length} uploads)...`
-    log('INFO', `Scanning ${backend.name} for already-exported CIDs...`)
-    let found = 0
-    for (const [i, upload] of pending.entries()) {
-      try {
-        if (await backend.hasContent(upload.root_cid)) {
-          queue.markComplete(upload.root_cid, backend.name, 0)
-          found++
-        }
-      } catch {
-        // skip — will be attempted during export
-      }
-      if ((i + 1) % 100 === 0) {
-        statusMessage = `Checking ${backend.name}... ${i + 1}/${pending.length} (${found} found)`
-      }
-    }
-    if (found > 0) {
-      log('INFO', `Found ${found}/${pending.length} already in ${backend.name}`)
-    }
-  }
-  // Reset session start to after sweep — so recently completed only shows actual exports
-  sessionStart = new Date().toISOString().replace('T', ' ').slice(0, 19)
   statusMessage = `Ready — ${queue.getStats().pending} pending, ${queue.getStats().complete} already done`
 
   // --- Verify only? ---

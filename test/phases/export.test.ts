@@ -1,10 +1,9 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { runExport } from '../../src/phases/export.js'
 import { UploadQueue } from '../../src/core/queue.js'
 import { BlockManifest } from '../../src/core/manifest.js'
 import { createDatabase } from '../../src/core/db.js'
 import { makeRawBlock, makeDagPBNode, buildCarBytes } from '../core/blocks.test.js'
-import http from 'node:http'
 import fs from 'node:fs'
 import type Database from 'better-sqlite3'
 import { CarBlockIterator } from '@ipld/car'
@@ -26,6 +25,11 @@ class MemoryBackend implements ExportBackend {
     this.pinned.add(rootCid)
   }
   async hasContent(rootCid: string) { return this.pinned.has(rootCid) }
+  async verifyDag(rootCid: string) {
+    return this.pinned.has(rootCid)
+      ? { valid: true }
+      : { valid: false, error: 'not pinned' }
+  }
   async hasBlock(cid: string) { return this.blocks.has(cid) }
   async putBlock(cid: string, bytes: Uint8Array) { this.blocks.set(cid, bytes) }
 }
@@ -61,36 +65,38 @@ describe('runExport', () => {
       [root1.cid.toString(), car1],
       [root2.cid.toString(), car2],
     ])
-
-    const server = http.createServer((req, res) => {
-      const url = new URL(req.url!, `http://${req.headers.host}`)
+    const originalFetch = globalThis.fetch
+    globalThis.fetch = vi.fn(async (input: RequestInfo | URL) => {
+      const url = new URL(String(input))
       const cidMatch = url.pathname.match(/\/ipfs\/([^?]+)/)
       if (cidMatch && carMap.has(cidMatch[1])) {
-        res.writeHead(200, { 'Content-Type': 'application/vnd.ipld.car' })
-        res.end(carMap.get(cidMatch[1]))
-      } else {
-        res.writeHead(404); res.end()
+        return new Response(carMap.get(cidMatch[1]), {
+          status: 200,
+          headers: { 'Content-Type': 'application/vnd.ipld.car' },
+        })
       }
-    })
-    await new Promise<void>(resolve => server.listen(0, resolve))
-    const gatewayUrl = `http://127.0.0.1:${(server.address() as any).port}`
+      return new Response('not found', { status: 404 })
+    }) as any
+    const gatewayUrl = 'http://gateway.test'
 
     const backend = new MemoryBackend()
     queue.add({ rootCid: root1.cid.toString(), spaceDid: 'did:key:test', spaceName: 'TestSpace', backend: 'memory' })
     queue.add({ rootCid: root2.cid.toString(), spaceDid: 'did:key:test', spaceName: 'TestSpace', backend: 'memory' })
 
-    await runExport({
-      queue,
-      manifest,
-      backends: [backend],
-      gatewayUrl,
-      concurrency: 2,
-      spaceNames: ['TestSpace'],
-    })
+    try {
+      await runExport({
+        queue,
+        manifest,
+        backends: [backend],
+        gatewayUrl,
+        concurrency: 2,
+        spaceNames: ['TestSpace'],
+      })
 
-    expect(queue.getStatus(root1.cid.toString(), 'memory')).toBe('complete')
-    expect(queue.getStatus(root2.cid.toString(), 'memory')).toBe('complete')
-
-    await new Promise<void>(resolve => server.close(() => resolve()))
+      expect(queue.getStatus(root1.cid.toString(), 'memory')).toBe('complete')
+      expect(queue.getStatus(root2.cid.toString(), 'memory')).toBe('complete')
+    } finally {
+      globalThis.fetch = originalFetch
+    }
   })
 })

@@ -30,17 +30,9 @@ export async function runVerify(options: VerifyOptions): Promise<VerifyResult> {
       onProgress?.({ type: 'verifying', rootCid: upload.root_cid, spaceName: upload.space_name })
 
       try {
-        let valid: boolean
-        let error: string | undefined
-
-        if (backend.verifyDag) {
-          const result = await backend.verifyDag(upload.root_cid)
-          valid = result.valid
-          error = result.error
-        } else {
-          valid = await backend.hasContent(upload.root_cid)
-          if (!valid) error = 'Content not found'
-        }
+        const result = await backend.verifyDag(upload.root_cid)
+        const valid = result.valid
+        const error = result.error
 
         if (valid) {
           verified++
