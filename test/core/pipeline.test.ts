@@ -8,6 +8,7 @@ import fs from 'node:fs'
 import type Database from 'better-sqlite3'
 import { CarBlockIterator } from '@ipld/car'
 import type { ExportBackend } from '../../src/backends/interface.js'
+import { GatewayFetcher } from '../../src/core/fetcher.js'
 
 const TEST_DB = '/tmp/storacha-v2-pipeline-test.db'
 
@@ -81,6 +82,7 @@ describe('exportUpload', () => {
       headers: { 'Content-Type': 'application/vnd.ipld.car' },
     })) as any
     const gatewayUrl = 'http://gateway.test'
+    const fetcher = new GatewayFetcher(gatewayUrl)
 
     const backend = new MemoryBackend()
     queue.add({ rootCid: root.cid.toString(), spaceDid: 'did:key:test', spaceName: 'Test', backend: 'memory' })
@@ -91,6 +93,7 @@ describe('exportUpload', () => {
         backend,
         queue,
         manifest,
+        fetcher,
         gatewayUrl,
       })
 
@@ -112,6 +115,7 @@ describe('exportUpload', () => {
       headers: { 'Content-Type': 'application/vnd.ipld.car' },
     })) as any
     const gatewayUrl = 'http://gateway.test'
+    const fetcher = new GatewayFetcher(gatewayUrl)
 
     const backend: ExportBackend = {
       name: 'lying',
@@ -138,6 +142,7 @@ describe('exportUpload', () => {
         backend,
         queue,
         manifest,
+        fetcher,
         gatewayUrl,
       })
 
