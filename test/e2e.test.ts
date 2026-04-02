@@ -25,6 +25,6 @@ describe('e2e: storacha-export', () => {
       encoding: 'utf8',
       cwd: ROOT,
     })
-    expect(out.trim()).toBe('2.0.0')
+    expect(out.trim()).toBe('3.0.0')
   })
 })

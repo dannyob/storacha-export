@@ -1,12 +1,14 @@
 import { Command } from 'commander'
 import { checkbox, confirm, input, select } from '@inquirer/prompts'
 import { detectCredentials, login } from './auth.js'
-import { enumerateUploads, collectSpaceSizes } from './phases/discover.js'
+import { enumerateUploads, collectSpaceSizes, discoverShards } from './phases/discover.js'
 import { runExport } from './phases/export.js'
 import { runVerify } from './phases/verify.js'
 import { createDatabase } from './core/db.js'
 import { UploadQueue } from './core/queue.js'
 import { BlockManifest } from './core/manifest.js'
+import { ShardStore } from './core/shards.js'
+import { GatewayFetcher } from './core/fetcher.js'
 import { createBackend } from './backends/registry.js'
 import { startDashboard } from './dashboard/server.js'
 import { generateDashboardHtml } from './dashboard/html.js'
@@ -314,6 +316,7 @@ async function _main(argv: string[]) {
   const db = createDatabase(dbPath)
   queue = new UploadQueue(db)
   const manifest = new BlockManifest(db)
+  const shardStore = new ShardStore(db)
 
   if (dbExists && !opts.fresh) {
     const reset = queue.resetForRetry()
@@ -358,6 +361,13 @@ async function _main(argv: string[]) {
   addLogLine(`Enumeration complete: ${enumCount} uploads queued`)
   statusMessage = `Ready — ${queue.getStats().pending} pending, ${queue.getStats().complete} already done`
 
+  // --- Shard discovery ---
+  statusMessage = 'Discovering blob shards...'
+  addLogLine('Discovering blob shards...')
+  const fetcher = new GatewayFetcher(opts.gateway)
+  await discoverShards(client, selectedSpaces, shardStore, fetcher)
+  addLogLine('Shard discovery complete')
+
   // --- Verify only? ---
   if (opts.verify) {
     phase = 'verify'
@@ -379,6 +389,8 @@ async function _main(argv: string[]) {
     gatewayUrl: opts.gateway,
     concurrency: opts.concurrency,
     spaceNames: selectedSpaces.map((s) => s.name),
+    shardStore,
+    createFetcher: () => fetcher,
     onProgress,
   })
 
