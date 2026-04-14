@@ -137,10 +137,16 @@ export async function discoverShards(
     log('INFO', `  ${space.name}: ${blobCount} blobs`)
 
     const candidates = store.getUnfetchedCandidateIndexes(space.did)
+    log('INFO', `  ${space.name}: ${candidates.length} candidate index blobs to check`)
     let indexCount = 0
     let multiShardCount = 0
+    let checked = 0
 
     for (const blob of candidates) {
+      checked++
+      if (checked % 100 === 0) {
+        log('INFO', `  ${space.name}: checked ${checked}/${candidates.length} candidates, ${indexCount} indexes found`)
+      }
       try {
         const res = await fetcher.fetchShard(blob.cid)
         const bytes = new Uint8Array(await res.arrayBuffer())
