@@ -122,12 +122,17 @@ export async function resolveShards(
 
   for (const rootCid of toResolve) {
     checked++
-    if (checked % 50 === 0) {
+    if (checked % 50 === 0 || checked <= 3) {
       log('INFO', `  Shard resolution: ${checked}/${toResolve.length} checked, ${resolved} resolved`)
     }
 
     try {
+      const t0 = Date.now()
       const shards = await resolveUploadShards(rootCid, client, indexer)
+      const elapsed = Date.now() - t0
+      if (checked <= 5 || elapsed > 10000) {
+        log('INFO', `  [${checked}] ${rootCid.slice(0, 20)}... ${shards ? shards.length + ' shards' : 'null'} (${elapsed}ms)`)
+      }
       if (shards) {
         shardStore.insertShards(rootCid, spaceDid, shards)
         resolved++
