@@ -369,19 +369,12 @@ async function _main(argv: string[]) {
   }
   statusMessage = `Ready — ${queue.getStats().pending} pending, ${queue.getStats().complete} already done`
 
-  // --- Shard resolution (serial — UCAN signing is CPU-intensive) ---
-  const indexer = new IndexingClient()
-  statusMessage = 'Resolving shard locations...'
-  for (const space of selectedSpaces) {
-    client.setCurrentSpace(space.did)
-    const pendingRoots = queue.getPending(backends[0].name)
-      .filter((u: any) => u.space_did === space.did)
-      .map((u: any) => u.root_cid)
-    if (pendingRoots.length > 0) {
-      const { resolved, failed } = await resolveShards(client, indexer, shardStore, pendingRoots, space.did)
-      addLogLine(`  ${space.name}: ${resolved} shard-resolved, ${failed} gateway-fallback`)
-    }
-  }
+  // --- Shard resolution skipped at runtime (use separate script to pre-resolve) ---
+  // UCAN crypto in @storacha/client blocks the event loop during resolution.
+  // Shards already cached in DB from prior runs will be used by the export phase.
+  const cachedShards = shardStore.hasResolvedShards('') ? 0 :
+    (db.prepare('SELECT count(DISTINCT upload_root) FROM shards').get() as any)?.['count(DISTINCT upload_root)'] || 0
+  log('INFO', `Using ${cachedShards} previously resolved shard mappings`)
 
   // --- Verify only? ---
   if (opts.verify) {
