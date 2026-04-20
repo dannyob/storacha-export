@@ -6,8 +6,16 @@ import { repairUpload } from './repair.js'
 import type { UploadQueue, UploadStatus } from './queue.js'
 import type { BlockManifest } from './manifest.js'
 import type { ShardStore } from './shards.js'
+import { resolveUploadShards } from './shard-resolver.js'
 import type { ExportBackend } from '../backends/interface.js'
 import { log } from '../util/log.js'
+
+export interface ShardResolverContext {
+  client: any
+  indexer: any
+  shardStore: ShardStore
+  spaceDid: string
+}
 
 export interface ExportUploadOptions {
   rootCid: string
@@ -17,6 +25,7 @@ export interface ExportUploadOptions {
   fetcher: GatewayFetcher
   gatewayUrl: string
   shardStore?: ShardStore
+  shardResolver?: ShardResolverContext
   maxRetries?: number
   uploadTimeout?: number
   onProgress?: (info: { type: string; [key: string]: any }) => void
@@ -117,6 +126,19 @@ export async function exportUpload(options: ExportUploadOptions): Promise<void> 
   if (needsExport.length === 0) {
     onProgress?.({ type: 'done', rootCid, bytes: 0 })
     return
+  }
+
+  // Resolve shards inline if we have a resolver context and haven't cached yet
+  if (options.shardResolver && options.shardStore && !options.shardStore.hasResolvedShards(rootCid)) {
+    try {
+      const { client, indexer, shardStore, spaceDid } = options.shardResolver
+      const shards = await resolveUploadShards(rootCid, client, indexer)
+      if (shards) {
+        shardStore.insertShards(rootCid, spaceDid, shards)
+      }
+    } catch (err: any) {
+      log('INFO', `${tag} Shard resolution failed: ${err.message}`)
+    }
   }
 
   // Try shard path first — direct R2 fetch, no gateway
