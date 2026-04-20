@@ -116,6 +116,7 @@ export async function exportUpload(options: ExportUploadOptions): Promise<void> 
   // Check which backends already have this content
   const needsExport: ExportBackend[] = []
   for (const b of backends) {
+    log('INFO', `${tag} Checking ${b.name}...`)
     const check = await b.verifyDag(rootCid)
     if (check.valid) {
       queue.markComplete(rootCid, b.name, 0)
@@ -131,11 +132,15 @@ export async function exportUpload(options: ExportUploadOptions): Promise<void> 
 
   // Resolve shards inline if we have a resolver context and haven't cached yet
   if (options.shardResolver && options.shardStore && !options.shardStore.hasResolvedShards(rootCid)) {
+    log('INFO', `${tag} Resolving shards...`)
     try {
       const { client, indexer, shardStore, spaceDid } = options.shardResolver
       const shards = await resolveUploadShards(rootCid, client, indexer)
       if (shards) {
         shardStore.insertShards(rootCid, spaceDid, shards)
+        log('INFO', `${tag} Resolved ${shards.length} shards`)
+      } else {
+        log('INFO', `${tag} No shards resolved`)
       }
     } catch (err: any) {
       log('INFO', `${tag} Shard resolution failed: ${err.message}`)
@@ -152,8 +157,10 @@ export async function exportUpload(options: ExportUploadOptions): Promise<void> 
     let totalBytes = 0
     try {
       for (const shard of shards) {
+        log('INFO', `${tag} Fetching shard ${shard.shard_order + 1}/${shards.length} from ${shard.location_url!.slice(0, 60)}...`)
         const res = await fetch(shard.location_url!)
         if (!res.ok) throw new Error(`Shard fetch HTTP ${res.status}: ${shard.shard_cid.slice(0, 20)}...`)
+        log('INFO', `${tag} Shard ${shard.shard_order + 1}/${shards.length} response OK, reading body...`)
         const carBytes = new Uint8Array(await res.arrayBuffer())
         totalBytes += carBytes.length
 
