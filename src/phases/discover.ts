@@ -1,6 +1,8 @@
 import type Database from 'better-sqlite3'
 import { log } from '../util/log.js'
 import { filesize } from '../util/format.js'
+import { resolveUploadShards, type IndexingService } from '../core/shard-resolver.js'
+import type { ShardStore } from '../core/shards.js'
 
 /**
  * Enumerate all uploads across selected spaces.
@@ -93,4 +95,51 @@ export async function collectSpaceSizes(
   }
 
   return sizes
+}
+
+/**
+ * Resolve shards for pending uploads in a space via the indexing service.
+ * Skips uploads that already have resolved shards in the store.
+ */
+export async function resolveShards(
+  client: any,
+  indexer: IndexingService,
+  shardStore: ShardStore,
+  pendingRoots: string[],
+  spaceDid: string,
+): Promise<{ resolved: number; failed: number }> {
+  let resolved = 0
+  let failed = 0
+  let checked = 0
+
+  const toResolve = pendingRoots.filter(r => !shardStore.hasResolvedShards(r))
+  if (toResolve.length === 0) {
+    log('INFO', `  Shard resolution: all ${pendingRoots.length} uploads already resolved`)
+    return { resolved: 0, failed: 0 }
+  }
+
+  log('INFO', `  Resolving shards for ${toResolve.length} uploads...`)
+
+  for (const rootCid of toResolve) {
+    checked++
+    if (checked % 50 === 0) {
+      log('INFO', `  Shard resolution: ${checked}/${toResolve.length} checked, ${resolved} resolved`)
+    }
+
+    try {
+      const shards = await resolveUploadShards(rootCid, client, indexer)
+      if (shards) {
+        shardStore.insertShards(rootCid, spaceDid, shards)
+        resolved++
+      } else {
+        failed++
+      }
+    } catch (err: any) {
+      log('INFO', `  Shard resolution failed for ${rootCid.slice(0, 20)}...: ${err.message}`)
+      failed++
+    }
+  }
+
+  log('INFO', `  Shard resolution: ${resolved} resolved, ${failed} fallback to gateway`)
+  return { resolved, failed }
 }

@@ -5,6 +5,7 @@ import { GatewayFetcher } from './fetcher.js'
 import { repairUpload } from './repair.js'
 import type { UploadQueue, UploadStatus } from './queue.js'
 import type { BlockManifest } from './manifest.js'
+import type { ShardStore } from './shards.js'
 import type { ExportBackend } from '../backends/interface.js'
 import { log } from '../util/log.js'
 
@@ -15,6 +16,7 @@ export interface ExportUploadOptions {
   manifest: BlockManifest
   fetcher: GatewayFetcher
   gatewayUrl: string
+  shardStore?: ShardStore
   maxRetries?: number
   uploadTimeout?: number
   onProgress?: (info: { type: string; [key: string]: any }) => void

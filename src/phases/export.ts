@@ -2,6 +2,7 @@ import { exportUpload } from '../core/pipeline.js'
 import { GatewayFetcher } from '../core/fetcher.js'
 import type { UploadQueue } from '../core/queue.js'
 import type { BlockManifest } from '../core/manifest.js'
+import type { ShardStore } from '../core/shards.js'
 import type { ExportBackend } from '../backends/interface.js'
 import { log } from '../util/log.js'
 
@@ -12,6 +13,7 @@ export interface ExportOptions {
   gatewayUrl: string
   concurrency?: number
   spaceNames?: string[]
+  shardStore?: ShardStore
   createFetcher?: (gatewayUrl: string) => GatewayFetcher
   onProgress?: (info: { type: string; [key: string]: any }) => void
 }
@@ -62,6 +64,7 @@ export async function runExport(options: ExportOptions): Promise<void> {
         manifest,
         fetcher,
         gatewayUrl,
+        shardStore: options.shardStore,
         onProgress: onProgress && ((info) => onProgress({ ...info, spaceName: upload.space_name })),
       })
     }
