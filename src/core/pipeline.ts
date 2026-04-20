@@ -26,6 +26,7 @@ export interface ExportUploadOptions {
   gatewayUrl: string
   shardStore?: ShardStore
   shardResolver?: ShardResolverContext
+  skipRepair?: boolean
   maxRetries?: number
   uploadTimeout?: number
   onProgress?: (info: { type: string; [key: string]: any }) => void
@@ -85,7 +86,7 @@ export async function exportUpload(options: ExportUploadOptions): Promise<void> 
   }
 
   const existingProgress = manifest.getProgress(rootCid)
-  if (existingProgress.total > 0 && existingProgress.missing > 0) {
+  if (existingProgress.total > 0 && existingProgress.missing > 0 && !options.skipRepair) {
     log('INFO', `${tag} Resuming repair: ${existingProgress.seen}/${existingProgress.total} blocks, ${existingProgress.missing} missing`)
     setAllStatus('repairing')
     onProgress?.({ type: 'repairing', rootCid, totalBlocks: existingProgress.missing })
@@ -322,7 +323,7 @@ export async function exportUpload(options: ExportUploadOptions): Promise<void> 
   }
 
   // Attempt inline repair
-  if (progress.total > 0 && progress.missing > 0) {
+  if (progress.total > 0 && progress.missing > 0 && !options.skipRepair) {
     setAllStatus('repairing')
     onProgress?.({ type: 'repairing', rootCid, totalBlocks: progress.missing })
 
