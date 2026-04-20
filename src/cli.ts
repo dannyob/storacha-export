@@ -45,6 +45,7 @@ async function _main(argv: string[]) {
     .option('--exclude-space <name...>', 'Skip named spaces (repeatable)')
     .option('--fresh', 'Start over, discarding previous progress tracking')
     .option('--verify', 'Run verification only (skip export)')
+    .option('--skip-repair', 'Skip repair of partially downloaded uploads')
     .option('--concurrency <n>', 'Parallel transfers', (v: string) => parseInt(v, 10), 3)
     .option('--gateway <url>', 'Gateway URL', 'https://w3s.link')
     .option('--db <path>', 'SQLite database path', 'storacha-export.db')
@@ -394,6 +395,7 @@ async function _main(argv: string[]) {
     spaceNames: selectedSpaces.map((s) => s.name),
     shardStore,
     shardResolver: { client, indexer, shardStore, spaceDid: '' },
+    skipRepair: opts.skipRepair,
     onProgress,
   })
 

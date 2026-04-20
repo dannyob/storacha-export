@@ -15,6 +15,7 @@ export interface ExportOptions {
   spaceNames?: string[]
   shardStore?: ShardStore
   shardResolver?: ShardResolverContext
+  skipRepair?: boolean
   createFetcher?: (gatewayUrl: string) => GatewayFetcher
   onProgress?: (info: { type: string; [key: string]: any }) => void
 }
@@ -70,6 +71,7 @@ export async function runExport(options: ExportOptions): Promise<void> {
         gatewayUrl,
         shardStore: options.shardStore,
         shardResolver,
+        skipRepair: options.skipRepair,
         onProgress: onProgress && ((info) => onProgress({ ...info, spaceName: upload.space_name })),
       })
     }
