@@ -162,7 +162,7 @@ export async function exportUpload(options: ExportUploadOptions): Promise<void> 
 
     let totalBytes = 0
     try {
-      // Clear any existing partial files so importCar writes fresh (no merge overhead)
+      // Clear existing files for backends that support it (avoids merge overhead)
       for (const b of needsExport) {
         if (b.clearContent) await b.clearContent(rootCid)
       }
@@ -173,7 +173,7 @@ export async function exportUpload(options: ExportUploadOptions): Promise<void> 
         const carBytes = new Uint8Array(await res.arrayBuffer())
         totalBytes += carBytes.length
 
-        // Import raw CAR bytes to all backends (one importCar call each)
+        // Import to each backend
         for (const b of needsExport) {
           await b.importCar(rootCid, (async function* () { yield carBytes })())
         }
