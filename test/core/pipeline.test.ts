@@ -9,6 +9,7 @@ import type Database from 'better-sqlite3'
 import { CarBlockIterator } from '@ipld/car'
 import type { ExportBackend } from '../../src/backends/interface.js'
 import { GatewayFetcher } from '../../src/core/fetcher.js'
+import { ShardStore } from '../../src/core/shards.js'
 
 const TEST_DB = '/tmp/storacha-v2-pipeline-test.db'
 
@@ -436,6 +437,58 @@ describe('exportUpload', () => {
       // backend1 already had it, only backend2 needed the import
       expect(backend1.blocks.size).toBe(0)
       expect(backend2.blocks.size).toBe(2)
+    } finally {
+      globalThis.fetch = originalFetch
+    }
+  })
+
+  it('uses shard path when shards are resolved', async () => {
+    const leaf1 = await makeRawBlock('shard-leaf-a')
+    const leaf2 = await makeRawBlock('shard-leaf-b')
+    const root = await makeDagPBNode([leaf1, leaf2])
+    const rootCid = root.cid.toString()
+
+    // Build two "shard" CARs
+    const car1 = await buildCarBytes([root, leaf1], [root])
+    const car2 = await buildCarBytes([leaf2], [leaf2])
+
+    const originalFetch = globalThis.fetch
+    globalThis.fetch = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input)
+      if (url === 'https://r2.example/shard-0') {
+        return new Response(car1, { status: 200 })
+      }
+      if (url === 'https://r2.example/shard-1') {
+        return new Response(car2, { status: 200 })
+      }
+      throw new Error(`Unexpected fetch: ${url}`)
+    }) as any
+
+    const backend = new MemoryBackend()
+    queue.add({ rootCid, spaceDid: 'did:key:test', spaceName: 'Test', backend: 'memory' })
+
+    const shardStore = new ShardStore(db)
+    shardStore.insertShards(rootCid, 'did:key:test', [
+      { shardCid: 'bafyshard0', locationUrl: 'https://r2.example/shard-0', size: car1.byteLength, order: 0 },
+      { shardCid: 'bafyshard1', locationUrl: 'https://r2.example/shard-1', size: car2.byteLength, order: 1 },
+    ])
+
+    try {
+      await exportUpload({
+        rootCid,
+        backends: [backend],
+        queue,
+        manifest,
+        fetcher: new GatewayFetcher('http://gateway.test'),
+        gatewayUrl: 'http://gateway.test',
+        shardStore,
+      })
+
+      expect(queue.getStatus(rootCid, 'memory')).toBe('complete')
+      expect(backend.blocks.size).toBe(3)
+      // Should NOT have called the gateway — only R2 URLs
+      const calls = (globalThis.fetch as any).mock.calls.map((c: any) => String(c[0]))
+      expect(calls.every((u: string) => u.startsWith('https://r2.example/'))).toBe(true)
     } finally {
       globalThis.fetch = originalFetch
     }
