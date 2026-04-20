@@ -105,6 +105,15 @@ export class KuboBackend implements ExportBackend {
     await res.text()
   }
 
+  async pinRoot(rootCid: string): Promise<void> {
+    const res = await fetch(`${this.apiUrl}/api/v0/pin/add?arg=${rootCid}`, { method: 'POST' })
+    if (!res.ok) {
+      const text = await res.text()
+      throw new Error(`pin/add failed (${res.status}): ${text}`)
+    }
+    await res.text()
+  }
+
   async verifyDag(rootCid: string): Promise<{ valid: boolean; error?: string }> {
     try {
       const res = await fetch(`${this.apiUrl}/api/v0/dag/stat?arg=${rootCid}`, { method: 'POST' })

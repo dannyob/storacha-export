@@ -18,6 +18,9 @@ export interface ExportBackend {
   /** Store an individual block (rootCid identifies which upload this belongs to) */
   putBlock?(cid: string, bytes: Uint8Array, rootCid?: string): Promise<void>
 
+  /** Pin a root CID (e.g. after importing shards whose CAR roots differ from the upload root) */
+  pinRoot?(rootCid: string): Promise<void>
+
   /** Deep verification — check that the full DAG is traversable */
   verifyDag(rootCid: string): Promise<{ valid: boolean; error?: string }>
 }
