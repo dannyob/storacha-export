@@ -25,36 +25,50 @@ export async function runExport(options: ExportOptions): Promise<void> {
     if (requeued > 0) {
       log('INFO', `Requeued ${requeued} complete ${backend.name} job(s) with manifest debt`)
     }
+  }
 
+  // Collect uploads pending for any backend (union)
+  const pendingByRoot = new Map<string, { root_cid: string; space_name: string; space_did: string }>()
+  for (const backend of backends) {
     const pending = spaceNames
       ? queue.getPendingForSpaces(backend.name, spaceNames)
       : queue.getPending(backend.name)
-
     log('INFO', `${pending.length} pending jobs for ${backend.name}`)
-
-    if (pending.length === 0) continue
-
-    let idx = 0
-
-    async function worker() {
-      while (idx < pending.length) {
-        const upload = pending[idx++]
-        onProgress?.({ type: 'downloading', rootCid: upload.root_cid, spaceName: upload.space_name })
-        await exportUpload({
-          rootCid: upload.root_cid,
-          backend,
-          queue,
-          manifest,
-          fetcher,
-          gatewayUrl,
-          onProgress: onProgress && ((info) => onProgress({ ...info, spaceName: upload.space_name })),
-        })
+    for (const upload of pending) {
+      if (!pendingByRoot.has(upload.root_cid)) {
+        pendingByRoot.set(upload.root_cid, upload)
       }
     }
-
-    const workers = Array.from({ length: concurrency }, () => worker())
-    await Promise.all(workers)
   }
+
+  const pending = Array.from(pendingByRoot.values())
+  log('INFO', `${pending.length} unique uploads to export across ${backends.length} backend(s)`)
+
+  if (pending.length === 0) {
+    onProgress?.({ type: 'export-complete' })
+    return
+  }
+
+  let idx = 0
+
+  async function worker() {
+    while (idx < pending.length) {
+      const upload = pending[idx++]
+      onProgress?.({ type: 'downloading', rootCid: upload.root_cid, spaceName: upload.space_name })
+      await exportUpload({
+        rootCid: upload.root_cid,
+        backends,
+        queue,
+        manifest,
+        fetcher,
+        gatewayUrl,
+        onProgress: onProgress && ((info) => onProgress({ ...info, spaceName: upload.space_name })),
+      })
+    }
+  }
+
+  const workers = Array.from({ length: concurrency }, () => worker())
+  await Promise.all(workers)
 
   onProgress?.({ type: 'export-complete' })
 }

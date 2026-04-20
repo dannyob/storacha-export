@@ -90,7 +90,7 @@ describe('exportUpload', () => {
     try {
       await exportUpload({
         rootCid: root.cid.toString(),
-        backend,
+        backends: [backend],
         queue,
         manifest,
         fetcher,
@@ -139,7 +139,7 @@ describe('exportUpload', () => {
     try {
       await exportUpload({
         rootCid: root.cid.toString(),
-        backend,
+        backends: [backend],
         queue,
         manifest,
         fetcher,
@@ -176,7 +176,7 @@ describe('exportUpload', () => {
     try {
       await exportUpload({
         rootCid,
-        backend,
+        backends: [backend],
         queue,
         manifest,
         fetcher: new GatewayFetcher('http://gateway.test'),
@@ -247,7 +247,7 @@ describe('exportUpload', () => {
     try {
       await exportUpload({
         rootCid,
-        backend,
+        backends: [backend],
         queue,
         manifest,
         fetcher: new GatewayFetcher('http://gateway.test'),
@@ -331,7 +331,7 @@ describe('exportUpload', () => {
     try {
       const exportPromise = exportUpload({
         rootCid,
-        backend,
+        backends: [backend],
         queue,
         manifest,
         fetcher: new GatewayFetcher('http://gateway.test'),
@@ -356,6 +356,88 @@ describe('exportUpload', () => {
       fromIterableSpy.mockRestore()
       globalThis.fetch = originalFetch
       vi.useRealTimers()
+    }
+  })
+
+  it('streams blocks to multiple backends simultaneously', async () => {
+    const leaf1 = await makeRawBlock('multi-a')
+    const leaf2 = await makeRawBlock('multi-b')
+    const root = await makeDagPBNode([leaf1, leaf2])
+    const carBytes = await buildCarBytes([root, leaf1, leaf2], [root])
+    const originalFetch = globalThis.fetch
+    globalThis.fetch = vi.fn(async () => new Response(carBytes, {
+      status: 200,
+      headers: { 'Content-Type': 'application/vnd.ipld.car' },
+    })) as any
+
+    const backend1 = new MemoryBackend()
+    backend1.name = 'mem1'
+    const backend2 = new MemoryBackend()
+    backend2.name = 'mem2'
+
+    const rootCid = root.cid.toString()
+    queue.add({ rootCid, spaceDid: 'did:key:test', spaceName: 'Test', backend: 'mem1' })
+    queue.add({ rootCid, spaceDid: 'did:key:test', spaceName: 'Test', backend: 'mem2' })
+
+    try {
+      await exportUpload({
+        rootCid,
+        backends: [backend1, backend2],
+        queue,
+        manifest,
+        fetcher: new GatewayFetcher('http://gateway.test'),
+        gatewayUrl: 'http://gateway.test',
+      })
+
+      expect(queue.getStatus(rootCid, 'mem1')).toBe('complete')
+      expect(queue.getStatus(rootCid, 'mem2')).toBe('complete')
+      expect(backend1.blocks.size).toBe(3)
+      expect(backend2.blocks.size).toBe(3)
+      // Only one fetch call — data streamed to both from single download
+      expect(globalThis.fetch).toHaveBeenCalledTimes(1)
+    } finally {
+      globalThis.fetch = originalFetch
+    }
+  })
+
+  it('skips backends that already have content', async () => {
+    const leaf = await makeRawBlock('skip-test')
+    const root = await makeDagPBNode([leaf])
+    const carBytes = await buildCarBytes([root, leaf], [root])
+    const originalFetch = globalThis.fetch
+    globalThis.fetch = vi.fn(async () => new Response(carBytes, {
+      status: 200,
+      headers: { 'Content-Type': 'application/vnd.ipld.car' },
+    })) as any
+
+    const backend1 = new MemoryBackend()
+    backend1.name = 'has-it'
+    backend1.pinned.add(root.cid.toString())
+
+    const backend2 = new MemoryBackend()
+    backend2.name = 'needs-it'
+
+    const rootCid = root.cid.toString()
+    queue.add({ rootCid, spaceDid: 'did:key:test', spaceName: 'Test', backend: 'has-it' })
+    queue.add({ rootCid, spaceDid: 'did:key:test', spaceName: 'Test', backend: 'needs-it' })
+
+    try {
+      await exportUpload({
+        rootCid,
+        backends: [backend1, backend2],
+        queue,
+        manifest,
+        fetcher: new GatewayFetcher('http://gateway.test'),
+        gatewayUrl: 'http://gateway.test',
+      })
+
+      expect(queue.getStatus(rootCid, 'has-it')).toBe('complete')
+      expect(queue.getStatus(rootCid, 'needs-it')).toBe('complete')
+      // backend1 already had it, only backend2 needed the import
+      expect(backend1.blocks.size).toBe(0)
+      expect(backend2.blocks.size).toBe(2)
+    } finally {
+      globalThis.fetch = originalFetch
     }
   })
 })
