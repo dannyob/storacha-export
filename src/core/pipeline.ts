@@ -154,6 +154,8 @@ export async function exportUpload(options: ExportUploadOptions): Promise<void> 
         for (const carBytes of allCarChunks) {
           await b.importCar(rootCid, (async function* () { yield carBytes })())
         }
+        // Pin the upload root — shard CAR headers have shard roots, not the upload root
+        if (b.pinRoot) await b.pinRoot(rootCid)
       }
 
       if (await verifyAll(totalBytes)) {
