@@ -1,12 +1,14 @@
 import { Command } from 'commander'
 import { checkbox, confirm, input, select } from '@inquirer/prompts'
 import { detectCredentials, login } from './auth.js'
-import { enumerateUploads, collectSpaceSizes } from './phases/discover.js'
+import { enumerateUploads, collectSpaceSizes, resolveShards } from './phases/discover.js'
 import { runExport } from './phases/export.js'
 import { runVerify } from './phases/verify.js'
 import { createDatabase } from './core/db.js'
 import { UploadQueue } from './core/queue.js'
 import { BlockManifest } from './core/manifest.js'
+import { ShardStore } from './core/shards.js'
+import { Client as IndexingClient } from '@storacha/indexing-service-client'
 import { createBackend } from './backends/registry.js'
 import { startDashboard } from './dashboard/server.js'
 import { generateDashboardHtml } from './dashboard/html.js'
@@ -314,6 +316,7 @@ async function _main(argv: string[]) {
   const db = createDatabase(dbPath)
   queue = new UploadQueue(db)
   const manifest = new BlockManifest(db)
+  const shardStore = new ShardStore(db)
 
   if (dbExists && !opts.fresh) {
     const reset = queue.resetForRetry()
@@ -358,6 +361,21 @@ async function _main(argv: string[]) {
   addLogLine(`Enumeration complete: ${enumCount} uploads queued`)
   statusMessage = `Ready — ${queue.getStats().pending} pending, ${queue.getStats().complete} already done`
 
+  // --- Shard resolution ---
+  statusMessage = 'Resolving shard locations...'
+  addLogLine('Resolving shard locations via indexing service...')
+  const indexer = new IndexingClient()
+  for (const space of selectedSpaces) {
+    client.setCurrentSpace(space.did)
+    const pendingRoots = queue.getPending(backends[0].name)
+      .filter((u: any) => u.space_did === space.did)
+      .map((u: any) => u.root_cid)
+    if (pendingRoots.length > 0) {
+      const { resolved, failed } = await resolveShards(client, indexer, shardStore, pendingRoots, space.did)
+      addLogLine(`  ${space.name}: ${resolved} shard-resolved, ${failed} gateway-fallback`)
+    }
+  }
+
   // --- Verify only? ---
   if (opts.verify) {
     phase = 'verify'
@@ -379,6 +397,7 @@ async function _main(argv: string[]) {
     gatewayUrl: opts.gateway,
     concurrency: opts.concurrency,
     spaceNames: selectedSpaces.map((s) => s.name),
+    shardStore,
     onProgress,
   })
 
