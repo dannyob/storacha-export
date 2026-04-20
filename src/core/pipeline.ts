@@ -156,6 +156,11 @@ export async function exportUpload(options: ExportUploadOptions): Promise<void> 
 
     let totalBytes = 0
     try {
+      // Clear any existing partial files so importCar writes fresh (no merge overhead)
+      for (const b of needsExport) {
+        if (b.clearContent) await b.clearContent(rootCid)
+      }
+
       for (const shard of shards) {
         const res = await fetch(shard.location_url!)
         if (!res.ok) throw new Error(`Shard fetch HTTP ${res.status}: ${shard.shard_cid.slice(0, 20)}...`)
