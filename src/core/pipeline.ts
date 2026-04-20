@@ -114,8 +114,14 @@ export async function exportUpload(options: ExportUploadOptions): Promise<void> 
   }
 
   // Check which backends already have this content
+  const hasShards = options.shardStore?.hasResolvedShards(rootCid) || false
   const needsExport: ExportBackend[] = []
   for (const b of backends) {
+    // Skip expensive verifyDag on local when we have shards — we'll clear and re-import
+    if (hasShards && b.clearContent) {
+      needsExport.push(b)
+      continue
+    }
     log('INFO', `${tag} Checking ${b.name}...`)
     const check = await b.verifyDag(rootCid)
     if (check.valid) {
