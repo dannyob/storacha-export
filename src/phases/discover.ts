@@ -122,17 +122,15 @@ export async function resolveShards(
 
   for (const rootCid of toResolve) {
     checked++
-    if (checked % 50 === 0 || checked <= 3) {
+    if (checked % 100 === 0) {
       log('INFO', `  Shard resolution: ${checked}/${toResolve.length} checked, ${resolved} resolved`)
     }
 
     try {
-      const t0 = Date.now()
-      const shards = await resolveUploadShards(rootCid, client, indexer)
-      const elapsed = Date.now() - t0
-      if (checked <= 5 || elapsed > 10000) {
-        log('INFO', `  [${checked}] ${rootCid.slice(0, 20)}... ${shards ? shards.length + ' shards' : 'null'} (${elapsed}ms)`)
-      }
+      const shards = await Promise.race([
+        resolveUploadShards(rootCid, client, indexer),
+        new Promise<null>((resolve) => setTimeout(() => resolve(null), 10000)),
+      ])
       if (shards) {
         shardStore.insertShards(rootCid, spaceDid, shards)
         resolved++
@@ -140,7 +138,6 @@ export async function resolveShards(
         failed++
       }
     } catch (err: any) {
-      log('INFO', `  Shard resolution failed for ${rootCid.slice(0, 20)}...: ${err.message}`)
       failed++
     }
   }
