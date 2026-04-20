@@ -157,22 +157,36 @@ export async function exportUpload(options: ExportUploadOptions): Promise<void> 
     let totalBytes = 0
     try {
       for (const shard of shards) {
-        log('INFO', `${tag} Fetching shard ${shard.shard_order + 1}/${shards.length} from ${shard.location_url!.slice(0, 60)}...`)
         const res = await fetch(shard.location_url!)
         if (!res.ok) throw new Error(`Shard fetch HTTP ${res.status}: ${shard.shard_cid.slice(0, 20)}...`)
-        log('INFO', `${tag} Shard ${shard.shard_order + 1}/${shards.length} response OK, reading body...`)
         const carBytes = new Uint8Array(await res.arrayBuffer())
         totalBytes += carBytes.length
 
-        // Parse blocks and push to all backends via putBlock (append-only, no re-read)
+        // Parse blocks for manifest tracking
         const { CarBlockIterator } = await import('@ipld/car')
         const iterator = await CarBlockIterator.fromIterable(
           (async function* () { yield carBytes })()
         )
         for await (const block of iterator) {
           manifest.markSeen(rootCid, block.cid.toString(), block.cid.code)
-          await putBlockAll(block)
         }
+
+        // Import to backends: importCar for fast bulk import (kubo), putBlock for append-only (local)
+        for (const b of needsExport) {
+          if (b.putBlock && !b.pinRoot) {
+            // Local-style backend: use putBlock for append-only writes (no re-read)
+            const iter2 = await CarBlockIterator.fromIterable(
+              (async function* () { yield carBytes })()
+            )
+            for await (const block of iter2) {
+              await b.putBlock!(block.cid.toString(), block.bytes, rootCid)
+            }
+          } else {
+            // Kubo-style backend: importCar sends one HTTP request per shard
+            await b.importCar(rootCid, (async function* () { yield carBytes })())
+          }
+        }
+
         onProgress?.({ type: 'progress', rootCid, bytes: totalBytes })
         log('INFO', `${tag} Shard ${shard.shard_order + 1}/${shards.length} done (${carBytes.length} bytes)`)
       }
