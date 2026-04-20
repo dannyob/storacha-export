@@ -150,33 +150,28 @@ export async function exportUpload(options: ExportUploadOptions): Promise<void> 
 
     let totalBytes = 0
     try {
-      // Fetch all shard CARs and collect raw bytes + parsed blocks
-      const allCarChunks: Uint8Array[] = []
       for (const shard of shards) {
         const res = await fetch(shard.location_url!)
         if (!res.ok) throw new Error(`Shard fetch HTTP ${res.status}: ${shard.shard_cid.slice(0, 20)}...`)
         const carBytes = new Uint8Array(await res.arrayBuffer())
         totalBytes += carBytes.length
-        allCarChunks.push(carBytes)
 
-        // Track blocks in manifest
+        // Parse blocks and push to all backends via putBlock (append-only, no re-read)
         const { CarBlockIterator } = await import('@ipld/car')
         const iterator = await CarBlockIterator.fromIterable(
           (async function* () { yield carBytes })()
         )
         for await (const block of iterator) {
           manifest.markSeen(rootCid, block.cid.toString(), block.cid.code)
+          await putBlockAll(block)
         }
         onProgress?.({ type: 'progress', rootCid, bytes: totalBytes })
         log('INFO', `${tag} Shard ${shard.shard_order + 1}/${shards.length} done (${carBytes.length} bytes)`)
       }
 
-      // Import each shard CAR to each backend (raw byte streams)
+      // Finalize: merge sidecar into final CAR (local), pin root (kubo)
+      await mergeRepairAll()
       for (const b of needsExport) {
-        for (const carBytes of allCarChunks) {
-          await b.importCar(rootCid, (async function* () { yield carBytes })())
-        }
-        // Pin the upload root — shard CAR headers have shard roots, not the upload root
         if (b.pinRoot) await b.pinRoot(rootCid)
       }
 
