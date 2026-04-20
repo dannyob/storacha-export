@@ -7,6 +7,14 @@ import type { ExportBackend } from './interface.js'
 import type { BlockStream } from '../core/blocks.js'
 import { log } from '../util/log.js'
 
+async function collectRest(iter: AsyncIterator<any>): Promise<Uint8Array[]> {
+  const chunks: Uint8Array[] = []
+  for (let next = await iter.next(); !next.done; next = await iter.next()) {
+    chunks.push(next.value)
+  }
+  return chunks
+}
+
 const RAW_CODEC = 0x55
 const DAG_PB_CODEC = 0x70
 
@@ -33,6 +41,7 @@ export class LocalBackend implements ExportBackend {
   async importCar(rootCid: string, stream: BlockStream | AsyncIterable<Uint8Array> | NodeJS.ReadableStream): Promise<void> {
     fs.mkdirSync(this.outputDir, { recursive: true })
     const filePath = this.carPath(rootCid)
+    const exists = fs.existsSync(filePath)
 
     // Detect if this is a raw byte stream or a BlockStream
     // by peeking at the first chunk — Blocks have { cid, bytes }, raw is Uint8Array/Buffer
@@ -56,8 +65,13 @@ export class LocalBackend implements ExportBackend {
       }
       await writer.close()
       await drain
+    } else if (exists) {
+      // Raw byte stream, file already exists — parse incoming CAR and append blocks
+      // (handles multiple shard CARs being imported to the same upload root)
+      const incoming = Buffer.concat([first.value, ...(await collectRest(iter))])
+      await this.appendBlocksFromCar(rootCid, incoming)
     } else {
-      // Raw byte stream — write directly
+      // Raw byte stream, new file — write directly
       const fileStream = fs.createWriteStream(filePath)
       fileStream.write(first.value)
       for (let next = await iter.next(); !next.done; next = await iter.next()) {
@@ -66,6 +80,49 @@ export class LocalBackend implements ExportBackend {
       fileStream.end()
       await new Promise<void>((resolve, reject) => { fileStream.on('finish', resolve); fileStream.on('error', reject) })
     }
+  }
+
+  /** Append blocks from an incoming CAR to an existing CAR file (for multi-shard imports) */
+  private async appendBlocksFromCar(rootCid: string, incomingBytes: Uint8Array): Promise<void> {
+    const filePath = this.carPath(rootCid)
+    const blocks = new Map<string, { cid: CID; bytes: Uint8Array }>()
+
+    // Read existing CAR
+    try {
+      const stream = fs.createReadStream(filePath)
+      const iter = await CarBlockIterator.fromIterable(stream)
+      for await (const block of iter) {
+        blocks.set(block.cid.toString(), block)
+      }
+    } catch {
+      // Truncated or corrupt — use what we got
+    }
+
+    // Parse incoming CAR bytes
+    const incomingIter = await CarBlockIterator.fromIterable(
+      (async function* () { yield incomingBytes })()
+    )
+    for await (const block of incomingIter) {
+      blocks.set(block.cid.toString(), block)
+    }
+
+    // Write merged CAR
+    const rootCidObj = CID.parse(rootCid)
+    const { writer, out } = CarWriter.create([rootCidObj])
+    const fileStream = fs.createWriteStream(filePath)
+    const drain = (async () => {
+      for await (const chunk of out) fileStream.write(chunk)
+      fileStream.end()
+      await new Promise<void>((resolve, reject) => {
+        fileStream.on('finish', resolve)
+        fileStream.on('error', reject)
+      })
+    })()
+    for (const block of blocks.values()) {
+      await writer.put(block)
+    }
+    await writer.close()
+    await drain
   }
 
   async verifyDag(rootCid: string): Promise<{ valid: boolean; error?: string }> {
