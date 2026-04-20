@@ -189,7 +189,7 @@ async function _main(argv: string[]) {
     cachedHtml = generateDashboardHtml(buildDashboardState())
     if (opts.htmlOut) fs.writeFileSync(opts.htmlOut, generateDashboardHtml(buildDashboardState(), { staticFile: true }))
   }
-  const dashboardInterval = setInterval(refreshDashboard, 2000)
+  const dashboardInterval = (opts.serve || opts.htmlOut) ? setInterval(refreshDashboard, 2000) : null
 
   if (opts.serve) {
     const [host, portStr] = (typeof opts.serve === 'string' ? opts.serve : '127.0.0.1:9000').split(':')

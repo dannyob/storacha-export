@@ -84,15 +84,13 @@ export class UploadQueue {
 
     this._getStats = db.prepare(`
       SELECT
-        COUNT(DISTINCT root_cid) as total,
-        COALESCE((SELECT COUNT(DISTINCT root_cid) FROM uploads u2
-          WHERE NOT EXISTS (SELECT 1 FROM uploads u3 WHERE u3.root_cid = u2.root_cid AND u3.status != 'complete')), 0) as complete,
-        COALESCE((SELECT COUNT(DISTINCT root_cid) FROM uploads WHERE status = 'error'), 0) as error,
-        COALESCE((SELECT COUNT(DISTINCT root_cid) FROM uploads WHERE status = 'pending'
-          AND root_cid NOT IN (SELECT root_cid FROM uploads WHERE status IN ('downloading', 'repairing', 'error'))), 0) as pending,
-        COALESCE((SELECT COUNT(DISTINCT root_cid) FROM uploads WHERE status = 'downloading'), 0) as downloading,
-        COALESCE((SELECT COUNT(DISTINCT root_cid) FROM uploads WHERE status = 'partial'), 0) as partial,
-        COALESCE((SELECT COUNT(DISTINCT root_cid) FROM uploads WHERE status = 'repairing'), 0) as repairing,
+        COUNT(*) as total,
+        COALESCE(SUM(CASE WHEN status = 'complete' THEN 1 ELSE 0 END), 0) as complete,
+        COALESCE(SUM(CASE WHEN status = 'error' THEN 1 ELSE 0 END), 0) as error,
+        COALESCE(SUM(CASE WHEN status = 'pending' THEN 1 ELSE 0 END), 0) as pending,
+        COALESCE(SUM(CASE WHEN status = 'downloading' THEN 1 ELSE 0 END), 0) as downloading,
+        COALESCE(SUM(CASE WHEN status = 'partial' THEN 1 ELSE 0 END), 0) as partial,
+        COALESCE(SUM(CASE WHEN status = 'repairing' THEN 1 ELSE 0 END), 0) as repairing,
         COALESCE(SUM(bytes_transferred), 0) as total_bytes
       FROM uploads
     `)
@@ -181,13 +179,11 @@ export class UploadQueue {
     const placeholders = spaceNames.map(() => '?').join(',')
     return this.db.prepare(`
       SELECT space_name,
-        COUNT(DISTINCT CASE WHEN root_cid NOT IN (
-          SELECT root_cid FROM uploads u2 WHERE u2.space_name = uploads.space_name AND u2.status != 'complete'
-        ) THEN root_cid END) as done,
-        COUNT(DISTINCT CASE WHEN status = 'error' THEN root_cid END) as errors,
-        COUNT(DISTINCT CASE WHEN status = 'pending' THEN root_cid END) as pending,
-        COUNT(DISTINCT CASE WHEN status IN ('downloading', 'repairing') THEN root_cid END) as active,
-        COUNT(DISTINCT root_cid) as total,
+        COALESCE(SUM(CASE WHEN status = 'complete' THEN 1 ELSE 0 END), 0) as done,
+        COALESCE(SUM(CASE WHEN status = 'error' THEN 1 ELSE 0 END), 0) as errors,
+        COALESCE(SUM(CASE WHEN status = 'pending' THEN 1 ELSE 0 END), 0) as pending,
+        COALESCE(SUM(CASE WHEN status IN ('downloading', 'repairing') THEN 1 ELSE 0 END), 0) as active,
+        COUNT(*) as total,
         COALESCE(SUM(bytes_transferred), 0) as bytes
       FROM uploads
       WHERE space_name IN (${placeholders})
