@@ -119,6 +119,49 @@ export async function exportUpload(options: ExportUploadOptions): Promise<void> 
     return
   }
 
+  // Try shard path first — direct R2 fetch, no gateway
+  if (options.shardStore?.hasResolvedShards(rootCid)) {
+    const shards = options.shardStore.getShardsForUpload(rootCid)
+    log('INFO', `${tag} Fetching ${shards.length} shard(s) from storage`)
+    for (const b of needsExport) queue.setStatus(rootCid, b.name, 'downloading')
+    onProgress?.({ type: 'downloading', rootCid })
+
+    let totalBytes = 0
+    try {
+      const blocks: Array<{ cid: any; bytes: Uint8Array }> = []
+      for (const shard of shards) {
+        const res = await fetch(shard.location_url!)
+        if (!res.ok) throw new Error(`Shard fetch HTTP ${res.status}: ${shard.shard_cid.slice(0, 20)}...`)
+        const carBytes = new Uint8Array(await res.arrayBuffer())
+        totalBytes += carBytes.length
+
+        const { CarBlockIterator } = await import('@ipld/car')
+        const iterator = await CarBlockIterator.fromIterable(
+          (async function* () { yield carBytes })()
+        )
+        for await (const block of iterator) {
+          blocks.push(block)
+          manifest.markSeen(rootCid, block.cid.toString(), block.cid.code)
+        }
+        onProgress?.({ type: 'progress', rootCid, bytes: totalBytes })
+        log('INFO', `${tag} Shard ${shard.shard_order + 1}/${shards.length} done (${carBytes.length} bytes)`)
+      }
+
+      // Import collected blocks to each backend
+      for (const b of needsExport) {
+        await b.importCar(rootCid, (async function* () { yield* blocks })())
+      }
+
+      if (await verifyAll(totalBytes)) {
+        log('INFO', `${tag} Complete via shards`)
+        return
+      }
+      log('INFO', `${tag} Shard import incomplete, falling back to gateway`)
+    } catch (err: any) {
+      log('INFO', `${tag} Shard path failed: ${err.message}, falling back to gateway`)
+    }
+  }
+
   for (const b of needsExport) queue.setStatus(rootCid, b.name, 'downloading')
 
   // Attempt to download the full CAR — stream raw bytes to all backends
