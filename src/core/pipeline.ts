@@ -162,37 +162,16 @@ export async function exportUpload(options: ExportUploadOptions): Promise<void> 
         const carBytes = new Uint8Array(await res.arrayBuffer())
         totalBytes += carBytes.length
 
-        // Parse blocks for manifest tracking
-        const { CarBlockIterator } = await import('@ipld/car')
-        const iterator = await CarBlockIterator.fromIterable(
-          (async function* () { yield carBytes })()
-        )
-        for await (const block of iterator) {
-          manifest.markSeen(rootCid, block.cid.toString(), block.cid.code)
-        }
-
-        // Import to backends: importCar for fast bulk import (kubo), putBlock for append-only (local)
+        // Import raw CAR bytes to all backends (one importCar call each)
         for (const b of needsExport) {
-          if (b.putBlock && !b.pinRoot) {
-            // Local-style backend: use putBlock for append-only writes (no re-read)
-            const iter2 = await CarBlockIterator.fromIterable(
-              (async function* () { yield carBytes })()
-            )
-            for await (const block of iter2) {
-              await b.putBlock!(block.cid.toString(), block.bytes, rootCid)
-            }
-          } else {
-            // Kubo-style backend: importCar sends one HTTP request per shard
-            await b.importCar(rootCid, (async function* () { yield carBytes })())
-          }
+          await b.importCar(rootCid, (async function* () { yield carBytes })())
         }
 
         onProgress?.({ type: 'progress', rootCid, bytes: totalBytes })
         log('INFO', `${tag} Shard ${shard.shard_order + 1}/${shards.length} done (${carBytes.length} bytes)`)
       }
 
-      // Finalize: merge sidecar into final CAR (local), pin root (kubo)
-      await mergeRepairAll()
+      // Pin the upload root on backends that support it
       for (const b of needsExport) {
         if (b.pinRoot) await b.pinRoot(rootCid)
       }
