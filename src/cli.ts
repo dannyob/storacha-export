@@ -338,28 +338,34 @@ async function _main(argv: string[]) {
     }
   }
 
-  // Enumerate and queue
-  let enumCount = 0
-  const batch: any[] = []
-  statusMessage = 'Enumerating uploads...'
-  for await (const upload of enumerateUploads(client, selectedSpaces)) {
-    enumCount++
-    if (enumCount % 100 === 0) {
-      statusMessage = `Enumerating uploads... ${enumCount} found`
+  // Enumerate and queue (skip if DB already has entries for these spaces)
+  const existingStats = queue.getStats()
+  if (existingStats.total > 0) {
+    log('INFO', `Resuming with ${existingStats.total} uploads already queued (${existingStats.complete} done, ${existingStats.pending} pending)`)
+    addLogLine(`Skipped enumeration — ${existingStats.total} uploads in DB`)
+  } else {
+    let enumCount = 0
+    const batch: any[] = []
+    statusMessage = 'Enumerating uploads...'
+    for await (const upload of enumerateUploads(client, selectedSpaces)) {
+      enumCount++
+      if (enumCount % 100 === 0) {
+        statusMessage = `Enumerating uploads... ${enumCount} found`
+      }
+      for (const be of backends) {
+        batch.push({
+          rootCid: upload.rootCid,
+          spaceDid: upload.spaceDid,
+          spaceName: upload.spaceName,
+          backend: be.name,
+        })
+      }
+      if (batch.length >= 500) { queue.addBatch(batch); batch.length = 0 }
     }
-    for (const be of backends) {
-      batch.push({
-        rootCid: upload.rootCid,
-        spaceDid: upload.spaceDid,
-        spaceName: upload.spaceName,
-        backend: be.name,
-      })
-    }
-    if (batch.length >= 500) { queue.addBatch(batch); batch.length = 0 }
+    if (batch.length > 0) queue.addBatch(batch)
+    statusMessage = `Enumerated ${enumCount} uploads`
+    addLogLine(`Enumeration complete: ${enumCount} uploads queued`)
   }
-  if (batch.length > 0) queue.addBatch(batch)
-  statusMessage = `Enumerated ${enumCount} uploads`
-  addLogLine(`Enumeration complete: ${enumCount} uploads queued`)
   statusMessage = `Ready — ${queue.getStats().pending} pending, ${queue.getStats().complete} already done`
 
   // --- Shard resolver context (resolution happens inline during export) ---
