@@ -3,14 +3,14 @@ import { CarBlockIterator } from '@ipld/car'
 import * as dagPB from '@ipld/dag-pb'
 import { GatewayFetcher } from './fetcher.js'
 import { repairUpload } from './repair.js'
-import type { UploadQueue } from './queue.js'
+import type { UploadQueue, UploadStatus } from './queue.js'
 import type { BlockManifest } from './manifest.js'
 import type { ExportBackend } from '../backends/interface.js'
 import { log } from '../util/log.js'
 
 export interface ExportUploadOptions {
   rootCid: string
-  backend: ExportBackend
+  backends: ExportBackend[]
   queue: UploadQueue
   manifest: BlockManifest
   fetcher: GatewayFetcher
@@ -31,70 +31,101 @@ function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise
 }
 
 export async function exportUpload(options: ExportUploadOptions): Promise<void> {
-  const { rootCid, backend, queue, manifest, fetcher, gatewayUrl, maxRetries = 3, uploadTimeout = 300000, onProgress } = options
+  const { rootCid, backends, queue, manifest, fetcher, gatewayUrl, maxRetries = 3, uploadTimeout = 300000, onProgress } = options
   const tag = `[${rootCid.slice(0, 24)}...]`
   let lastError: Error | undefined
+
+  // Helper: set status on all backends
+  function setAllStatus(status: UploadStatus) {
+    for (const b of backends) queue.setStatus(rootCid, b.name, status)
+  }
+
+  // Helper: push a block to all backends that support putBlock
+  async function putBlockAll(block: { cid: { toString(): string }; bytes: Uint8Array }) {
+    for (const b of backends) {
+      if (b.putBlock) await b.putBlock(block.cid.toString(), block.bytes, rootCid)
+    }
+  }
+
+  // Helper: verify all backends, mark each independently. Returns true if all valid.
+  async function verifyAll(bytes: number): Promise<boolean> {
+    let allValid = true
+    for (const b of backends) {
+      const result = await b.verifyDag(rootCid)
+      if (result.valid) {
+        queue.markComplete(rootCid, b.name, bytes)
+      } else {
+        queue.setStatus(rootCid, b.name, 'partial')
+        lastError = new Error(result.error || `DAG verification failed in ${b.name}`)
+        allValid = false
+      }
+    }
+    if (allValid) {
+      onProgress?.({ type: 'done', rootCid, bytes })
+    }
+    return allValid
+  }
+
+  // Helper: merge repair sidecars on backends that support it
+  async function mergeRepairAll() {
+    for (const b of backends) {
+      if ('mergeRepairCar' in b) await (b as any).mergeRepairCar(rootCid)
+    }
+  }
 
   const existingProgress = manifest.getProgress(rootCid)
   if (existingProgress.total > 0 && existingProgress.missing > 0) {
     log('INFO', `${tag} Resuming repair: ${existingProgress.seen}/${existingProgress.total} blocks, ${existingProgress.missing} missing`)
-    queue.setStatus(rootCid, backend.name, 'repairing')
+    setAllStatus('repairing')
     onProgress?.({ type: 'repairing', rootCid, totalBlocks: existingProgress.missing })
 
-    // Generic repair: fetch missing blocks individually
-    {
-      const result = await repairUpload(
-        rootCid,
-        manifest,
-        (cidStr) => fetcher.fetchBlock(cidStr),
-        {
-          onProgress: (fetched, total, bytes) => onProgress?.({ type: 'repair-progress', rootCid, fetched, total, bytes }),
-          onBlock: backend.putBlock ? async (block) => { await backend.putBlock!(block.cid.toString(), block.bytes, rootCid) } : undefined,
-          fetchSubCar: (cid) => fetcher.fetchCar(cid),
-        },
-      )
+    const result = await repairUpload(
+      rootCid,
+      manifest,
+      (cidStr) => fetcher.fetchBlock(cidStr),
+      {
+        onProgress: (fetched, total, bytes) => onProgress?.({ type: 'repair-progress', rootCid, fetched, total, bytes }),
+        onBlock: async (block) => { await putBlockAll(block) },
+        fetchSubCar: (cid) => fetcher.fetchCar(cid),
+      },
+    )
 
-      if (result && result.complete) {
-        // Merge repair sidecar for local backend
-        if ('mergeRepairCar' in backend) {
-          await (backend as any).mergeRepairCar(rootCid)
-        }
-
-        const verifyResult = await backend.verifyDag(rootCid)
-        if (verifyResult.valid) {
-          queue.markComplete(rootCid, backend.name, 0)
-          onProgress?.({ type: 'done', rootCid, bytes: 0 })
-          log('REPAIR', `${tag} Repaired and verified`)
-          return
-        }
-
-        queue.setStatus(rootCid, backend.name, 'partial')
-        lastError = new Error(verifyResult.error || 'DAG verification failed after repair')
+    if (result && result.complete) {
+      await mergeRepairAll()
+      if (await verifyAll(0)) {
+        log('REPAIR', `${tag} Repaired and verified`)
+        return
       }
     }
 
-    // Repair failed — fall through to full download as last resort
     log('INFO', `${tag} Repair incomplete, trying full CAR download`)
   }
 
-  const initialCheck = await backend.verifyDag(rootCid)
-  if (initialCheck.valid) {
-    queue.markComplete(rootCid, backend.name, 0)
+  // Check which backends already have this content
+  const needsExport: ExportBackend[] = []
+  for (const b of backends) {
+    const check = await b.verifyDag(rootCid)
+    if (check.valid) {
+      queue.markComplete(rootCid, b.name, 0)
+      log('INFO', `${tag} Already complete in ${b.name}`)
+    } else {
+      needsExport.push(b)
+    }
+  }
+  if (needsExport.length === 0) {
     onProgress?.({ type: 'done', rootCid, bytes: 0 })
-    log('INFO', `${tag} Already complete in ${backend.name}`)
     return
   }
 
-  queue.setStatus(rootCid, backend.name, 'downloading')
+  for (const b of needsExport) queue.setStatus(rootCid, b.name, 'downloading')
 
-  // Attempt to download the full CAR — stream raw bytes directly to backend
+  // Attempt to download the full CAR — stream raw bytes to all backends
   for (let attempt = 1; attempt <= maxRetries; attempt++) {
     const abortController = new AbortController()
     let cleanupStreams: (() => void) | undefined
     let trackingPromise: Promise<void> | undefined
 
     try {
-      // Wait for rate gate before fetching — coordinates with repair workers
       await fetcher.waitForRateGate()
 
       const url = `${gatewayUrl.replace(/\/$/, '')}/ipfs/${rootCid}?format=car`
@@ -118,7 +149,6 @@ export async function exportUpload(options: ExportUploadOptions): Promise<void> 
         throw new Error(`Gateway returned ${res.status}: ${res.statusText}`)
       }
 
-      // Stream raw CAR bytes to backend, tee a copy for block tracking
       const nodeStream = Readable.fromWeb(res.body! as any)
       let byteCount = 0
       let trackedBlocks = 0
@@ -136,27 +166,30 @@ export async function exportUpload(options: ExportUploadOptions): Promise<void> 
         },
       })
 
-      const backendStream = new PassThrough()
+      // Fork to N backend streams + 1 tracking stream
+      const backendStreams = needsExport.map(() => new PassThrough())
       const trackingStream = new PassThrough({ highWaterMark: 1024 * 1024 })
 
       nodeStream.on('error', (err) => countingStream.destroy(err))
-      backendStream.on('error', () => {})
+      for (const bs of backendStreams) bs.on('error', () => {})
       trackingStream.on('error', () => {})
-      countingStream.on('error', () => { backendStream.destroy(); trackingStream.destroy() })
+      countingStream.on('error', () => {
+        for (const bs of backendStreams) bs.destroy()
+        trackingStream.destroy()
+      })
 
       nodeStream.pipe(countingStream)
-      countingStream.pipe(backendStream)
+      for (const bs of backendStreams) countingStream.pipe(bs)
       countingStream.pipe(trackingStream)
 
       cleanupStreams = () => {
         abortController.abort()
         nodeStream.destroy()
         countingStream.destroy()
-        backendStream.destroy()
+        for (const bs of backendStreams) bs.destroy()
         trackingStream.destroy()
       }
 
-      // Track blocks in parallel — if tracking fails/stalls, unpipe it so backend isn't blocked
       trackingPromise = (async () => {
         try {
           const iterator = await CarBlockIterator.fromIterable(trackingStream)
@@ -179,36 +212,24 @@ export async function exportUpload(options: ExportUploadOptions): Promise<void> 
         } catch {
           // Truncated or error
         } finally {
-          // Critical: unpipe so backend stream isn't blocked if tracking exits early
           countingStream.unpipe(trackingStream)
           trackingStream.destroy()
         }
       })()
 
+      // Import to all backends in parallel
       await withTimeout(
-        backend.importCar(rootCid, backendStream as any),
+        Promise.all(needsExport.map((b, i) => b.importCar(rootCid, backendStreams[i] as any))),
         uploadTimeout,
         `CAR download ${rootCid.slice(0, 24)}...`,
       )
 
-      // Don't await trackingPromise — if backend finished, tracking can finish in background
       trackingPromise.catch(() => {})
 
-      // Success — verify the backend can traverse the full DAG
-      const verifyResult = await backend.verifyDag(rootCid)
-      if (verifyResult.valid) {
-        queue.markComplete(rootCid, backend.name, byteCount)
-        onProgress?.({ type: 'done', rootCid, bytes: byteCount })
-        return
-      }
+      if (await verifyAll(byteCount)) return
 
-      // Repair decisions depend on manifest state, so wait for tracking to finish
-      // before falling through to the post-download repair path.
+      // Wait for tracking before falling through to repair
       await trackingPromise
-
-      // Import succeeded but verification failed — mark partial, will repair
-      queue.setStatus(rootCid, backend.name, 'partial')
-      lastError = new Error(verifyResult.error || 'DAG verification failed after import')
       break
 
     } catch (err: any) {
@@ -216,64 +237,50 @@ export async function exportUpload(options: ExportUploadOptions): Promise<void> 
       cleanupStreams?.()
       await trackingPromise?.catch(() => {})
       if (attempt < maxRetries) {
-        // Reset seen flags between retries — tee may have recorded blocks the backend didn't get
-        // But keep DAG links so next attempt's tracking builds on known structure
         manifest.resetSeen(rootCid)
         const delay = Math.min(1000 * Math.pow(2, attempt), 30000)
         onProgress?.({ type: 'retry', rootCid, attempt, delay, error: err.message })
         await new Promise(r => setTimeout(r, delay))
       }
-      // On last attempt: keep manifest with seen flags — inline repair needs to know what's missing
     }
   }
 
   // Download failed — check if we got partial data
   const progress = manifest.getProgress(rootCid)
   if (progress.total > 0) {
-    queue.setStatus(rootCid, backend.name, 'partial')
+    for (const b of needsExport) queue.setStatus(rootCid, b.name, 'partial')
     const missingPB = manifest.getMissingDagPB(rootCid).length
     log('INFO', `${tag} Partial: ${progress.seen}/${progress.total} blocks (${progress.missing} missing, ${missingPB} dag-pb)`)
   }
 
-  // Attempt inline repair — even with missing dag-pb, we can fetch them individually
+  // Attempt inline repair
   if (progress.total > 0 && progress.missing > 0) {
-    queue.setStatus(rootCid, backend.name, 'repairing')
+    setAllStatus('repairing')
     onProgress?.({ type: 'repairing', rootCid, totalBlocks: progress.missing })
 
-    // Generic repair
-    {
-      const result = await repairUpload(
-        rootCid,
-        manifest,
-        (cidStr) => fetcher.fetchBlock(cidStr),
-        {
-          onProgress: (fetched, total, bytes) => onProgress?.({ type: 'repair-progress', rootCid, fetched, total, bytes }),
-          onBlock: backend.putBlock ? async (block) => { await backend.putBlock!(block.cid.toString(), block.bytes, rootCid) } : undefined,
-          fetchSubCar: (cid) => fetcher.fetchCar(cid),
-        },
-      )
+    const result = await repairUpload(
+      rootCid,
+      manifest,
+      (cidStr) => fetcher.fetchBlock(cidStr),
+      {
+        onProgress: (fetched, total, bytes) => onProgress?.({ type: 'repair-progress', rootCid, fetched, total, bytes }),
+        onBlock: async (block) => { await putBlockAll(block) },
+        fetchSubCar: (cid) => fetcher.fetchCar(cid),
+      },
+    )
 
-      if (result && result.complete) {
-        // Merge repair sidecar for local backend
-        if ('mergeRepairCar' in backend) {
-          await (backend as any).mergeRepairCar(rootCid)
-        }
-
-        const verifyResult = await backend.verifyDag(rootCid)
-        if (verifyResult.valid) {
-          queue.markComplete(rootCid, backend.name, 0)
-          onProgress?.({ type: 'done', rootCid, bytes: 0 })
-          log('REPAIR', `${tag} Repaired and verified`)
-          return
-        }
-
-        queue.setStatus(rootCid, backend.name, 'partial')
-        lastError = new Error(verifyResult.error || 'DAG verification failed after repair')
+    if (result && result.complete) {
+      await mergeRepairAll()
+      if (await verifyAll(0)) {
+        log('REPAIR', `${tag} Repaired and verified`)
+        return
       }
     }
   }
 
-  // All attempts failed
-  queue.markError(rootCid, backend.name, lastError?.message || 'unknown error')
+  // All attempts failed — mark error on backends that aren't complete
+  for (const b of needsExport) {
+    queue.markError(rootCid, b.name, lastError?.message || 'unknown error')
+  }
   onProgress?.({ type: 'error', rootCid, error: lastError?.message })
 }
