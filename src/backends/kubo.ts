@@ -116,11 +116,21 @@ export class KuboBackend implements ExportBackend {
 
   async verifyDag(rootCid: string): Promise<{ valid: boolean; error?: string }> {
     try {
-      const res = await fetch(`${this.apiUrl}/api/v0/dag/stat?arg=${rootCid}`, { method: 'POST' })
+      const controller = new AbortController()
+      const timer = setTimeout(() => controller.abort(), 30000)
+      const res = await fetch(`${this.apiUrl}/api/v0/dag/stat?arg=${rootCid}`, {
+        method: 'POST',
+        signal: controller.signal,
+      })
       if (!res.ok) {
+        clearTimeout(timer)
         const text = await res.text()
         return { valid: false, error: `dag/stat failed: ${text}` }
       }
+      // dag/stat streams the response as it traverses the DAG — for large DAGs
+      // this can take minutes. Cancel the body once we know it's 200 OK.
+      clearTimeout(timer)
+      await res.body?.cancel()
       return { valid: true }
     } catch (err: any) {
       return { valid: false, error: err.message }
