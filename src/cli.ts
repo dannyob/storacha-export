@@ -1,7 +1,7 @@
 import { Command } from 'commander'
 import { checkbox, confirm, input, select } from '@inquirer/prompts'
 import { detectCredentials, login } from './auth.js'
-import { enumerateUploads, collectSpaceSizes } from './phases/discover.js'
+import { enumerateUploads, collectSpaceSizes, resolveShards } from './phases/discover.js'
 import { runExport } from './phases/export.js'
 import { runVerify } from './phases/verify.js'
 import { createDatabase } from './core/db.js'
@@ -369,8 +369,19 @@ async function _main(argv: string[]) {
   }
   statusMessage = `Ready — ${queue.getStats().pending} pending, ${queue.getStats().complete} already done`
 
-  // --- Shard resolver context (resolution happens inline during export) ---
+  // --- Shard resolution (serial — UCAN signing is CPU-intensive) ---
   const indexer = new IndexingClient()
+  statusMessage = 'Resolving shard locations...'
+  for (const space of selectedSpaces) {
+    client.setCurrentSpace(space.did)
+    const pendingRoots = queue.getPending(backends[0].name)
+      .filter((u: any) => u.space_did === space.did)
+      .map((u: any) => u.root_cid)
+    if (pendingRoots.length > 0) {
+      const { resolved, failed } = await resolveShards(client, indexer, shardStore, pendingRoots, space.did)
+      addLogLine(`  ${space.name}: ${resolved} shard-resolved, ${failed} gateway-fallback`)
+    }
+  }
 
   // --- Verify only? ---
   if (opts.verify) {
@@ -394,7 +405,6 @@ async function _main(argv: string[]) {
     concurrency: opts.concurrency,
     spaceNames: selectedSpaces.map((s) => s.name),
     shardStore,
-    shardResolver: { client, indexer, shardStore, spaceDid: '' },
     skipRepair: opts.skipRepair,
     onProgress,
   })
