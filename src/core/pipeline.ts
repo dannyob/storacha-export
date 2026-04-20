@@ -104,18 +104,11 @@ export async function exportUpload(options: ExportUploadOptions): Promise<void> 
     log('INFO', `${tag} Repair incomplete, trying full CAR download`)
   }
 
-  // Check which backends already have this content
-  const hasShards = options.shardStore?.hasResolvedShards(rootCid) || false
+  // Quick pre-check: use hasContent (pin/ls — local only, fast) to skip already-done uploads
   const needsExport: ExportBackend[] = []
   for (const b of backends) {
-    // Skip expensive verifyDag on local when we have shards — we'll clear and re-import
-    if (hasShards && b.clearContent) {
-      needsExport.push(b)
-      continue
-    }
-    log('INFO', `${tag} Checking ${b.name}...`)
-    const check = await b.verifyDag(rootCid)
-    if (check.valid) {
+    const hasIt = b.hasContent ? await b.hasContent(rootCid) : false
+    if (hasIt) {
       queue.markComplete(rootCid, b.name, 0)
       log('INFO', `${tag} Already complete in ${b.name}`)
     } else {
