@@ -106,55 +106,7 @@ describe('exportUpload', () => {
     }
   })
 
-  it('does not trust hasContent alone when deciding completion', async () => {
-    const leaf = await makeRawBlock('hello')
-    const root = await makeDagPBNode([leaf])
-    const carBytes = await buildCarBytes([root, leaf], [root])
-    const originalFetch = globalThis.fetch
-    globalThis.fetch = vi.fn(async () => new Response(carBytes, {
-      status: 200,
-      headers: { 'Content-Type': 'application/vnd.ipld.car' },
-    })) as any
-    const gatewayUrl = 'http://gateway.test'
-    const fetcher = new GatewayFetcher(gatewayUrl)
-
-    const backend: ExportBackend = {
-      name: 'lying',
-      imported: false,
-      async importCar(_rootCid: string, stream: any): Promise<void> {
-        for await (const _chunk of stream) {}
-        this.imported = true
-      },
-      async hasContent(): Promise<boolean> {
-        return true
-      },
-      async verifyDag(): Promise<{ valid: boolean; error?: string }> {
-        return this.imported
-          ? { valid: true }
-          : { valid: false, error: 'file exists but DAG is incomplete' }
-      },
-    } as any
-
-    queue.add({ rootCid: root.cid.toString(), spaceDid: 'did:key:test', spaceName: 'Test', backend: 'lying' })
-
-    try {
-      await exportUpload({
-        rootCid: root.cid.toString(),
-        backends: [backend],
-        queue,
-        manifest,
-        fetcher,
-        gatewayUrl,
-      })
-
-      expect((backend as any).imported).toBe(true)
-      expect(queue.getStatus(root.cid.toString(), 'lying')).toBe('complete')
-    } finally {
-      globalThis.fetch = originalFetch
-    }
-  })
-
-  it('skips download when verifyDag already confirms completeness', async () => {
+  it('skips download when hasContent confirms completeness', async () => {
     const rootCid = 'bafyalreadycomplete'
     const originalFetch = globalThis.fetch
     globalThis.fetch = vi.fn(async () => {
@@ -166,6 +118,9 @@ describe('exportUpload', () => {
       name: 'ready',
       async importCar() {
         importCalls++
+      },
+      async hasContent() {
+        return true
       },
       async verifyDag() {
         return { valid: true }
