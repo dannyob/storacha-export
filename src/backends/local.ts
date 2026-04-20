@@ -38,6 +38,12 @@ export class LocalBackend implements ExportBackend {
     return fs.existsSync(this.carPath(rootCid))
   }
 
+  async clearContent(rootCid: string): Promise<void> {
+    const filePath = this.carPath(rootCid)
+    try { fs.unlinkSync(filePath) } catch {}
+    try { fs.unlinkSync(filePath + '.repair') } catch {}
+  }
+
   async importCar(rootCid: string, stream: BlockStream | AsyncIterable<Uint8Array> | NodeJS.ReadableStream): Promise<void> {
     fs.mkdirSync(this.outputDir, { recursive: true })
     const filePath = this.carPath(rootCid)
