@@ -38,6 +38,17 @@ export function createDatabase(path: string): Database.Database {
       total_bytes INTEGER,
       enumerated_at TEXT
     );
+
+    CREATE TABLE IF NOT EXISTS shards (
+      upload_root TEXT NOT NULL,
+      shard_cid TEXT NOT NULL,
+      location_url TEXT,
+      shard_size INTEGER,
+      shard_order INTEGER NOT NULL,
+      space_did TEXT NOT NULL,
+      resolved INTEGER DEFAULT 0,
+      PRIMARY KEY (upload_root, shard_cid)
+    );
   `)
 
   return db
