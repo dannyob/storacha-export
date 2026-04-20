@@ -40,7 +40,7 @@ class MemoryBackend implements ExportBackend {
   }
 
   async verifyDag(rootCid: string): Promise<{ valid: boolean; error?: string }> {
-    return this.pinned.has(rootCid)
+    return (this.pinned.has(rootCid) || this.blocks.has(rootCid))
       ? { valid: true }
       : { valid: false, error: 'not pinned' }
   }
