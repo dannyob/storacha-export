@@ -45,7 +45,8 @@ describe('resolveUploadShards', () => {
       }),
     }
 
-    const result = await resolveUploadShards('bafyroot', client as any, indexer as any)
+    const rootCid = (await makeCID('root')).toString()
+    const result = await resolveUploadShards(rootCid, client as any, indexer as any)
     expect(result).toHaveLength(2)
     expect(result![0].shardCid).toBe(shard1.toString())
     expect(result![0].locationUrl).toBe('https://r2.example/shard-1')
@@ -67,7 +68,8 @@ describe('resolveUploadShards', () => {
     }
     const indexer = { queryClaims: async () => ({ ok: { claims: new Map() } }) }
 
-    const result = await resolveUploadShards('bafyroot', client as any, indexer as any)
+    const rootCid = (await makeCID('root')).toString()
+    const result = await resolveUploadShards(rootCid, client as any, indexer as any)
     expect(result).toBeNull()
   })
 
@@ -86,7 +88,8 @@ describe('resolveUploadShards', () => {
       queryClaims: async () => ({ ok: { claims: new Map() } }),
     }
 
-    const result = await resolveUploadShards('bafyroot', client as any, indexer as any)
+    const rootCid = (await makeCID('root')).toString()
+    const result = await resolveUploadShards(rootCid, client as any, indexer as any)
     expect(result).toBeNull()
   })
 })
