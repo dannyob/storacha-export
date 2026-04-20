@@ -1,4 +1,5 @@
 import { base58btc } from 'multiformats/bases/base58'
+import { CID } from 'multiformats/cid'
 import type { ShardInput } from './shards.js'
 import { log } from '../util/log.js'
 
@@ -16,13 +17,11 @@ export async function resolveUploadShards(
   indexer: IndexingService,
 ): Promise<ShardInput[] | null> {
   // Paginate all shards for this upload
+  const root = CID.parse(rootCid)
   const shardLinks: any[] = []
   let cursor: string | undefined
   do {
-    const page = await client.capability.upload.shard.list(
-      { toString: () => rootCid } as any,
-      { cursor },
-    )
+    const page = await client.capability.upload.shard.list(root, { cursor })
     shardLinks.push(...page.results)
     cursor = page.cursor
   } while (cursor)
