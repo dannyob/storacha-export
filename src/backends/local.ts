@@ -72,10 +72,15 @@ export class LocalBackend implements ExportBackend {
       await writer.close()
       await drain
     } else if (exists) {
-      // Raw byte stream, file already exists — parse incoming CAR and append blocks
-      // (handles multiple shard CARs being imported to the same upload root)
-      const incoming = Buffer.concat([first.value, ...(await collectRest(iter))])
-      await this.appendBlocksFromCar(rootCid, incoming)
+      // Raw byte stream, file already exists — append raw bytes
+      // (for shard imports: each shard is written sequentially after clearContent)
+      const fileStream = fs.createWriteStream(filePath, { flags: 'a' })
+      fileStream.write(first.value)
+      for (let next = await iter.next(); !next.done; next = await iter.next()) {
+        fileStream.write(next.value)
+      }
+      fileStream.end()
+      await new Promise<void>((resolve, reject) => { fileStream.on('finish', resolve); fileStream.on('error', reject) })
     } else {
       // Raw byte stream, new file — write directly
       const fileStream = fs.createWriteStream(filePath)
