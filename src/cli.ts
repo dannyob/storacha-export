@@ -264,7 +264,8 @@ async function _main(argv: string[]) {
   // --- Backend selection ---
   let backends: ExportBackend[]
   if (opts.backend) {
-    backends = opts.backend.map((name: string) =>
+    const uniqueNames = [...new Set(opts.backend as string[])]
+    backends = uniqueNames.map((name: string) =>
       createBackend(name, { apiUrl: opts.kuboApi, outputDir: opts.output })
     )
   } else {
