@@ -78,7 +78,8 @@ const insertFile = db.prepare(`INSERT OR REPLACE INTO files (upload_root, shard_
 const markDone = db.prepare(`UPDATE uploads SET status = 'done', bytes_total = ?, updated_at = datetime('now') WHERE root_cid = ?`)
 const markError = db.prepare(`UPDATE uploads SET status = 'error', updated_at = datetime('now') WHERE root_cid = ?`)
 const markResolved = db.prepare(`UPDATE uploads SET shard_count = ?, updated_at = datetime('now') WHERE root_cid = ?`)
-const getPending = db.prepare(`SELECT * FROM uploads WHERE status = 'pending' AND shard_count > 0`)
+const getPendingAll = db.prepare(`SELECT * FROM uploads WHERE status = 'pending' AND shard_count > 0`)
+const getPendingBySpace = db.prepare(`SELECT * FROM uploads WHERE status = 'pending' AND shard_count > 0 AND space_name = ?`)
 const getUnresolved = db.prepare(`SELECT * FROM uploads WHERE shard_count = 0`)
 const getShards = db.prepare(`SELECT * FROM shards WHERE upload_root = ? ORDER BY shard_order`)
 const getStats = db.prepare(`SELECT status, count(*) as n FROM uploads GROUP BY status`)
@@ -230,7 +231,7 @@ log(`Shard resolution: ${resolved} resolved, ${resolveFailed} failed`)
 
 // --- Phase 3: Download shards ---
 fs.mkdirSync(OUTPUT_DIR, { recursive: true })
-const pending = getPending.all() as Array<{ root_cid: string; shard_count: number }>
+const pending = (SPACE_FILTER ? getPendingBySpace.all(SPACE_FILTER) : getPendingAll.all()) as Array<{ root_cid: string; shard_count: number }>
 log(`Downloading ${pending.length} uploads (${CONCURRENCY} concurrent)...`)
 
 let downloaded = 0
