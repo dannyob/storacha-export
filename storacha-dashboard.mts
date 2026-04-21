@@ -41,14 +41,14 @@ function render(db: Database.Database): string {
   `).all() as Array<{ space_name: string; total: number; done: number; errors: number; pending: number; bytes: number }>
 
   const recentDone = db.prepare(`
-    SELECT upload_root, space_name, shard_count, bytes_total, updated_at
+    SELECT root_cid, space_name, shard_count, bytes_total, updated_at
     FROM uploads WHERE status = 'done' ORDER BY updated_at DESC LIMIT 10
-  `).all() as Array<{ upload_root: string; space_name: string; shard_count: number; bytes_total: number; updated_at: string }>
+  `).all() as Array<{ root_cid: string; space_name: string; shard_count: number; bytes_total: number; updated_at: string }>
 
   const recentErrors = db.prepare(`
-    SELECT upload_root, space_name, updated_at
+    SELECT root_cid, space_name, updated_at
     FROM uploads WHERE status = 'error' ORDER BY updated_at DESC LIMIT 5
-  `).all() as Array<{ upload_root: string; space_name: string; updated_at: string }>
+  `).all() as Array<{ root_cid: string; space_name: string; updated_at: string }>
 
   const fileCount = db.prepare(`SELECT count(*) as n, coalesce(sum(bytes), 0) as bytes FROM files`).get() as { n: number; bytes: number }
 
@@ -144,11 +144,11 @@ function render(db: Database.Database): string {
   }).join('\n')
 
   const recentRows = recentDone.map(r =>
-    `<tr><td>${escapeHtml(r.space_name)}</td><td><code>${r.upload_root.slice(0, 32)}...</code></td><td>${r.shard_count}</td><td>${fmtBytes(r.bytes_total)}</td><td>${r.updated_at}</td></tr>`
+    `<tr><td>${escapeHtml(r.space_name)}</td><td><code>${r.root_cid.slice(0, 32)}...</code></td><td>${r.shard_count}</td><td>${fmtBytes(r.bytes_total)}</td><td>${r.updated_at}</td></tr>`
   ).join('\n')
 
   const errorRows = recentErrors.map(r =>
-    `<tr><td>${escapeHtml(r.space_name)}</td><td><code>${r.upload_root.slice(0, 32)}...</code></td><td>${r.updated_at}</td></tr>`
+    `<tr><td>${escapeHtml(r.space_name)}</td><td><code>${r.root_cid.slice(0, 32)}...</code></td><td>${r.updated_at}</td></tr>`
   ).join('\n')
 
   return `<!DOCTYPE html>
