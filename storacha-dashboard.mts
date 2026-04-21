@@ -52,6 +52,38 @@ function render(db: Database.Database): string {
 
   const fileCount = db.prepare(`SELECT count(*) as n, coalesce(sum(bytes), 0) as bytes FROM files`).get() as { n: number; bytes: number }
 
+  // Time estimates based on recent completions
+  const recentRate = db.prepare(`
+    SELECT count(*) as n, coalesce(sum(bytes_total), 0) as bytes,
+      min(updated_at) as first_at, max(updated_at) as last_at
+    FROM uploads WHERE status = 'done' AND updated_at >= datetime('now', '-1 hour')
+  `).get() as { n: number; bytes: number; first_at: string; last_at: string }
+
+  let etaText = ''
+  let rateText = ''
+  if (recentRate.n >= 2 && recentRate.first_at !== recentRate.last_at) {
+    const firstMs = new Date(recentRate.first_at + 'Z').getTime()
+    const lastMs = new Date(recentRate.last_at + 'Z').getTime()
+    const spanSec = (lastMs - firstMs) / 1000
+    if (spanSec > 0) {
+      const bytesPerSec = recentRate.bytes / spanSec
+      const uploadsPerHour = (recentRate.n / spanSec) * 3600
+      rateText = `${fmtBytes(Math.round(bytesPerSec))}/s &middot; ${uploadsPerHour.toFixed(0)} uploads/hr`
+      const remainingBytes = bySpace.reduce((a, s) => a + (s.pending * (s.total > 0 ? s.bytes / Math.max(s.done, 1) : 0)), 0)
+      if (bytesPerSec > 0 && remainingBytes > 0) {
+        const etaSec = remainingBytes / bytesPerSec
+        const etaHours = etaSec / 3600
+        if (etaHours < 1) {
+          etaText = `~${Math.round(etaSec / 60)} min remaining`
+        } else if (etaHours < 48) {
+          etaText = `~${etaHours.toFixed(0)} hours remaining`
+        } else {
+          etaText = `~${(etaHours / 24).toFixed(1)} days remaining`
+        }
+      }
+    }
+  }
+
   // Read last 20 log lines if available
   let logLines = ''
   if (LOG_PATH) {
@@ -75,14 +107,39 @@ function render(db: Database.Database): string {
     return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
   }
 
+  // Per-space recent rate for individual ETAs
+  const spaceRates = db.prepare(`
+    SELECT space_name, count(*) as n, coalesce(sum(bytes_total), 0) as bytes,
+      min(updated_at) as first_at, max(updated_at) as last_at
+    FROM uploads WHERE status = 'done' AND updated_at >= datetime('now', '-2 hours')
+    GROUP BY space_name
+  `).all() as Array<{ space_name: string; n: number; bytes: number; first_at: string; last_at: string }>
+  const spaceRateMap = new Map(spaceRates.map(r => [r.space_name, r]))
+
   const spaceRows = bySpace.map(s => {
     const pct = s.total > 0 ? Math.round(100 * s.done / s.total) : 0
     const bar = `<div style="background:#2d2d2d;border-radius:3px;overflow:hidden;height:16px"><div style="background:#4ade80;height:100%;width:${pct}%"></div></div>`
+    let eta = ''
+    if (s.pending > 0 && s.done > 0) {
+      const rate = spaceRateMap.get(s.space_name)
+      if (rate && rate.n >= 2 && rate.first_at !== rate.last_at) {
+        const spanSec = (new Date(rate.last_at + 'Z').getTime() - new Date(rate.first_at + 'Z').getTime()) / 1000
+        const avgBytes = rate.bytes / rate.n
+        const uploadsPerSec = rate.n / spanSec
+        if (uploadsPerSec > 0) {
+          const etaHours = (s.pending / uploadsPerSec) / 3600
+          eta = etaHours < 1 ? `~${Math.round(etaHours * 60)}m` : etaHours < 48 ? `~${etaHours.toFixed(0)}h` : `~${(etaHours / 24).toFixed(1)}d`
+        }
+      }
+    } else if (s.pending === 0) {
+      eta = 'done'
+    }
     return `<tr>
       <td>${escapeHtml(s.space_name)}</td>
       <td>${s.done}</td><td>${s.errors}</td><td>${s.pending}</td><td>${s.total}</td>
       <td>${fmtBytes(s.bytes)}</td>
       <td style="min-width:100px">${bar} ${pct}%</td>
+      <td>${eta}</td>
     </tr>`
   }).join('\n')
 
@@ -128,11 +185,13 @@ function render(db: Database.Database): string {
   <div class="card"><div class="num">${pending.toLocaleString()}</div><div class="label">Pending</div></div>
   <div class="card"><div class="num">${fmtBytes(totalBytes)}</div><div class="label">Downloaded</div></div>
   <div class="card"><div class="num">${fileCount.n.toLocaleString()}</div><div class="label">CAR Files</div></div>
+  ${rateText ? `<div class="card"><div class="num" style="font-size:1.2em">${rateText}</div><div class="label">Current Rate</div></div>` : ''}
+  ${etaText ? `<div class="card"><div class="num" style="font-size:1.2em;color:#fbbf24">${etaText}</div><div class="label">ETA</div></div>` : ''}
 </div>
 
 <h2>Per Space</h2>
 <table>
-<tr><th>Space</th><th>Done</th><th>Err</th><th>Pending</th><th>Total</th><th>Downloaded</th><th>Progress</th></tr>
+<tr><th>Space</th><th>Done</th><th>Err</th><th>Pending</th><th>Total</th><th>Downloaded</th><th>Progress</th><th>ETA</th></tr>
 ${spaceRows}
 </table>
 
