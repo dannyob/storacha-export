@@ -52,7 +52,14 @@ function render(db: Database.Database): string {
 
   const fileCount = db.prepare(`SELECT count(*) as n, coalesce(sum(bytes), 0) as bytes FROM files`).get() as { n: number; bytes: number }
 
-  // Time estimates based on recent completions
+  // Time estimates: use total downloaded bytes vs elapsed time since first completion
+  const rateInfo = db.prepare(`
+    SELECT count(*) as n, coalesce(sum(bytes_total), 0) as bytes,
+      min(updated_at) as first_at, max(updated_at) as last_at
+    FROM uploads WHERE status = 'done'
+  `).get() as { n: number; bytes: number; first_at: string; last_at: string }
+
+  // Recent rate (last hour) for current speed display
   const recentRate = db.prepare(`
     SELECT count(*) as n, coalesce(sum(bytes_total), 0) as bytes,
       min(updated_at) as first_at, max(updated_at) as last_at
@@ -69,7 +76,15 @@ function render(db: Database.Database): string {
       const bytesPerSec = recentRate.bytes / spanSec
       const uploadsPerHour = (recentRate.n / spanSec) * 3600
       rateText = `${fmtBytes(Math.round(bytesPerSec))}/s &middot; ${uploadsPerHour.toFixed(0)} uploads/hr`
-      const remainingBytes = bySpace.reduce((a, s) => a + (s.pending * (s.total > 0 ? s.bytes / Math.max(s.done, 1) : 0)), 0)
+
+      // Estimate remaining bytes: for each space, use avg bytes per done upload × pending count
+      // Fall back to total bytes / total uploads if no completions yet for a space
+      const allAvgBytes = rateInfo.n > 0 ? rateInfo.bytes / rateInfo.n : 350 * 1024 * 1024
+      const remainingBytes = bySpace.reduce((a, s) => {
+        const avgPerUpload = s.done > 0 ? s.bytes / s.done : allAvgBytes
+        return a + (s.pending * avgPerUpload)
+      }, 0)
+
       if (bytesPerSec > 0 && remainingBytes > 0) {
         const etaSec = remainingBytes / bytesPerSec
         const etaHours = etaSec / 3600
