@@ -1,4 +1,10 @@
 import { Readable, PassThrough } from 'node:stream'
+import { Agent } from 'undici'
+
+const shardDispatcher = new Agent({
+  bodyTimeout: 600000,    // 10 min — large shards on slow disk
+  headersTimeout: 60000,  // 60s for initial response
+})
 import { CarBlockIterator } from '@ipld/car'
 import * as dagPB from '@ipld/dag-pb'
 import { GatewayFetcher } from './fetcher.js'
@@ -138,7 +144,7 @@ export async function exportUpload(options: ExportUploadOptions): Promise<void> 
       }
 
       for (const shard of shards) {
-        const res = await fetch(shard.location_url!)
+        const res = await fetch(shard.location_url!, { dispatcher: shardDispatcher } as any)
         if (!res.ok) throw new Error(`Shard fetch HTTP ${res.status}: ${shard.shard_cid.slice(0, 20)}...`)
         const carBytes = new Uint8Array(await res.arrayBuffer())
         totalBytes += carBytes.length
