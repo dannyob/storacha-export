@@ -35,13 +35,24 @@ export class LocalBackend implements ExportBackend {
   }
 
   async hasContent(rootCid: string): Promise<boolean> {
-    return fs.existsSync(this.carPath(rootCid))
+    if (fs.existsSync(this.carPath(rootCid))) return true
+    // Check for shard files
+    const shardPath = path.join(this.outputDir, `${rootCid}.shard-0.car`)
+    return fs.existsSync(shardPath)
   }
 
   async clearContent(rootCid: string): Promise<void> {
     const filePath = this.carPath(rootCid)
     try { fs.unlinkSync(filePath) } catch {}
     try { fs.unlinkSync(filePath + '.repair') } catch {}
+    // Also clean up any shard files from previous runs
+    const dir = path.dirname(filePath)
+    const prefix = `${rootCid}.shard-`
+    try {
+      for (const f of fs.readdirSync(dir)) {
+        if (f.startsWith(prefix)) fs.unlinkSync(path.join(dir, f))
+      }
+    } catch {}
   }
 
   async importCar(rootCid: string, stream: BlockStream | AsyncIterable<Uint8Array> | NodeJS.ReadableStream): Promise<void> {
@@ -136,8 +147,24 @@ export class LocalBackend implements ExportBackend {
     await drain
   }
 
+  async importShardCar(rootCid: string, shardIndex: number, stream: AsyncIterable<Uint8Array>): Promise<void> {
+    fs.mkdirSync(this.outputDir, { recursive: true })
+    const filePath = path.join(this.outputDir, `${rootCid}.shard-${shardIndex}.car`)
+    const fileStream = fs.createWriteStream(filePath)
+    for await (const chunk of stream) {
+      fileStream.write(chunk)
+    }
+    fileStream.end()
+    await new Promise<void>((resolve, reject) => { fileStream.on('finish', resolve); fileStream.on('error', reject) })
+  }
+
   async verifyDag(rootCid: string): Promise<{ valid: boolean; error?: string }> {
     const filePath = this.carPath(rootCid)
+    // Shard files count as valid (each shard is a complete CAR from R2)
+    const shardPath = path.join(this.outputDir, `${rootCid}.shard-0.car`)
+    if (fs.existsSync(shardPath)) {
+      return { valid: true }
+    }
     if (!fs.existsSync(filePath)) {
       return { valid: false, error: 'CAR file not found' }
     }
