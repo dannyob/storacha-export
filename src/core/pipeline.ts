@@ -151,7 +151,12 @@ export async function exportUpload(options: ExportUploadOptions): Promise<void> 
 
         // Import to each backend
         for (const b of needsExport) {
-          await b.importCar(rootCid, (async function* () { yield carBytes })())
+          if (b.importShardCar) {
+            // Write individual shard file (fast sequential write, no merge)
+            await b.importShardCar(rootCid, shard.shard_order, (async function* () { yield carBytes })())
+          } else {
+            await b.importCar(rootCid, (async function* () { yield carBytes })())
+          }
         }
 
         onProgress?.({ type: 'progress', rootCid, bytes: totalBytes })

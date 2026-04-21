@@ -21,6 +21,9 @@ export interface ExportBackend {
   /** Remove existing content for a root (e.g. before shard re-import) */
   clearContent?(rootCid: string): Promise<void>
 
+  /** Import a single shard CAR by index (avoids merge overhead) */
+  importShardCar?(rootCid: string, shardIndex: number, stream: AsyncIterable<Uint8Array>): Promise<void>
+
   /** Pin a root CID (e.g. after importing shards whose CAR roots differ from the upload root) */
   pinRoot?(rootCid: string): Promise<void>
 
