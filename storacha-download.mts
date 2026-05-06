@@ -38,6 +38,14 @@ function log(msg: string) {
   console.log(`${ts} ${msg}`)
 }
 
+function formatBytes(n: number): string {
+  if (n < 1024) return `${n} B`
+  if (n < 1024 ** 2) return `${(n / 1024).toFixed(1)} KiB`
+  if (n < 1024 ** 3) return `${(n / 1024 ** 2).toFixed(1)} MiB`
+  if (n < 1024 ** 4) return `${(n / 1024 ** 3).toFixed(2)} GiB`
+  return `${(n / 1024 ** 4).toFixed(2)} TiB`
+}
+
 // --- Auth ---
 log('Authenticating...')
 const creds = await detectCredentials()
@@ -273,7 +281,7 @@ log(`Shard resolution: ${resolved} resolved, ${resolveFailed} failed`)
 // --- Phase 3: Download shards ---
 fs.mkdirSync(OUTPUT_DIR, { recursive: true })
 const pending = (SPACE_FILTER ? getPendingBySpace.all(SPACE_FILTER) : getPendingAll.all()) as Array<{ root_cid: string; shard_count: number }>
-log(`Downloading ${pending.length} uploads (${CONCURRENCY} concurrent)...`)
+log(`Fetching ${pending.length} uploads (${CONCURRENCY} concurrent)...`)
 
 let downloaded = 0
 let downloadFailed = 0
@@ -310,8 +318,7 @@ async function worker(id: number) {
       markDone.run(uploadBytes, rootCid)
       downloaded++
       totalBytes += uploadBytes
-      const mb = (uploadBytes / 1024 / 1024).toFixed(0)
-      log(`[${id}] ✓ ${rootCid.slice(0, 24)}... ${shards.length} shards ${mb} MiB [${downloaded}/${pending.length}]`)
+      log(`[${id}] ✓ ${rootCid.slice(0, 24)}... ${shards.length} shards ${formatBytes(uploadBytes)} [${downloaded}/${pending.length}]`)
     } catch (err: any) {
       markError.run(rootCid)
       downloadFailed++
@@ -326,7 +333,7 @@ await Promise.all(workers)
 const elapsed = ((Date.now() - t0) / 1000).toFixed(0)
 
 log(`\nComplete: ${downloaded} downloaded, ${downloadFailed} failed`)
-log(`Total: ${(totalBytes / 1024 / 1024 / 1024).toFixed(1)} GiB in ${elapsed}s`)
+log(`Total: ${formatBytes(totalBytes)} in ${elapsed}s`)
 log(`\nStatus:`)
 for (const row of getStats.all() as any[]) {
   log(`  ${row.status}: ${row.n}`)
