@@ -11,7 +11,7 @@
 import Database from 'better-sqlite3'
 import fs from 'node:fs'
 import path from 'node:path'
-import { detectCredentials } from './src/auth.js'
+import { detectCredentials } from './auth.mts'
 import { CID } from 'multiformats/cid'
 import { base58btc } from 'multiformats/bases/base58'
 import { Client as IndexingClient } from '@storacha/indexing-service-client'
