@@ -7,6 +7,7 @@
  *
  * Usage:
  *   npx tsx storacha-download.mts [--output /store/cars] [--space DataCivica] [--concurrency 3]
+ *   npx tsx storacha-download.mts --list-spaces
  */
 import Database from 'better-sqlite3'
 import fs from 'node:fs'
@@ -27,9 +28,71 @@ const OUTPUT_DIR = arg('output', './cars')
 const SPACE_FILTER = arg('space', '')
 const CONCURRENCY = parseInt(arg('concurrency', '3'), 10)
 const DB_PATH = arg('db', './storacha-download.db')
+const LIST_SPACES = args.includes('--list-spaces')
 
 // Long timeout for large shard downloads on slow disks
 const fetchAgent = new Agent({ bodyTimeout: 600000, headersTimeout: 60000 })
+
+function log(msg: string) {
+  const ts = new Date().toISOString().replace('T', ' ').slice(0, 19)
+  console.log(`${ts} ${msg}`)
+}
+
+// --- Auth ---
+log('Authenticating...')
+const creds = await detectCredentials()
+if (!creds.hasCredentials) { console.error('No credentials'); process.exit(1) }
+const client = creds.client
+const indexer = new IndexingClient()
+
+const allSpaces: Array<{ did: string; name: string }> = client.spaces().map((s: any) => ({
+  did: s.did(),
+  name: s.name || '(unnamed)',
+}))
+const spaces = SPACE_FILTER
+  ? allSpaces.filter(s => s.name.toLowerCase() === SPACE_FILTER.toLowerCase())
+  : allSpaces
+
+// --- List spaces and exit (if --list-spaces) ---
+if (LIST_SPACES) {
+  console.log(`${spaces.length} space(s):`)
+  for (const s of spaces) console.log(`  ${s.name} - ${s.did}`)
+
+  // Per-space sizes via usage report (last full month → now)
+  const now = new Date()
+  const from = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - 1, 1))
+  const period = { from, to: now }
+  let totalBytes = 0n
+  console.log('\nUsage:')
+  for (const account of Object.values(client.accounts())) {
+    try {
+      const subs = await (account as any).capability.subscription.list((account as any).did())
+      for (const { consumers } of subs.results) {
+        for (const spaceDid of consumers) {
+          const space = spaces.find(s => s.did === spaceDid)
+          if (!space) continue
+          try {
+            const result = await client.capability.usage.report(spaceDid, period)
+            let total = 0n
+            for (const [, report] of Object.entries(result)) {
+              total += BigInt((report as any)?.size?.final || 0)
+            }
+            totalBytes += total
+            const gb = Number(total) / (1024 ** 3)
+            console.log(`  ${space.name}: ${gb.toFixed(1)} GiB`)
+          } catch {
+            console.log(`  ${space.name}: (no access to usage)`)
+          }
+        }
+      }
+    } catch {}
+  }
+  const tb = Number(totalBytes) / (1024 ** 4)
+  console.log(`\nTotal: ${tb.toFixed(2)} TiB`)
+  process.exit(0)
+}
+
+log(`${spaces.length} space(s) to process`)
 
 // --- DB setup ---
 const db = new Database(DB_PATH)
@@ -83,28 +146,6 @@ const getPendingBySpace = db.prepare(`SELECT * FROM uploads WHERE status = 'pend
 const getUnresolved = db.prepare(`SELECT * FROM uploads WHERE shard_count = 0`)
 const getShards = db.prepare(`SELECT * FROM shards WHERE upload_root = ? ORDER BY shard_order`)
 const getStats = db.prepare(`SELECT status, count(*) as n FROM uploads GROUP BY status`)
-
-function log(msg: string) {
-  const ts = new Date().toISOString().replace('T', ' ').slice(0, 19)
-  console.log(`${ts} ${msg}`)
-}
-
-// --- Auth ---
-log('Authenticating...')
-const creds = await detectCredentials()
-if (!creds.hasCredentials) { console.error('No credentials'); process.exit(1) }
-const client = creds.client
-const indexer = new IndexingClient()
-
-const allSpaces: Array<{ did: string; name: string }> = client.spaces().map((s: any) => ({
-  did: s.did(),
-  name: s.name || '(unnamed)',
-}))
-const spaces = SPACE_FILTER
-  ? allSpaces.filter(s => s.name.toLowerCase() === SPACE_FILTER.toLowerCase())
-  : allSpaces
-
-log(`${spaces.length} space(s) to process`)
 
 // --- Phase 1: Enumerate uploads ---
 for (const space of spaces) {
