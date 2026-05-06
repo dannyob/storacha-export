@@ -1,5 +1,6 @@
 node_modules/
 *.db
 *.db-journal
-.worktrees/
+*.db-shm
+*.db-wal
 .worktrees/
