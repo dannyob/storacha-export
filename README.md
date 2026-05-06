@@ -10,8 +10,30 @@ Both scripts run directly via `tsx`. There is no compiled build step.
 ## Install
 
 ```bash
+git clone git@github.com:dannyob/storacha-export.git
+cd storacha-export
 npm install
 ```
+
+Node ≥ 20 required. There is no build step — both scripts run directly via `tsx`.
+
+## Authenticate
+
+`storacha-download` reads credentials from a [`@storacha/client`](https://www.npmjs.com/package/@storacha/client) `StoreConf` on disk. It looks for either of two profiles, in order:
+
+1. `storacha-export` (this project's own profile, if you've used a previous version)
+2. `storacha-cli` (the profile written by the official Storacha CLI)
+
+The simplest route is to install the CLI and log in:
+
+```bash
+npm install -g @storacha/cli
+storacha login your@email.com   # follow the email-link confirmation
+```
+
+That populates the `storacha-cli` profile, which `storacha-download` then picks up automatically. On macOS the data lives in `~/Library/Preferences/storacha-cli-nodejs/config.json`; on Linux, `~/.config/storacha-cli-nodejs/config.json`.
+
+`storacha-download` does **not** currently support inline login (the `auth.mts` module exports a `login()` function, but the script doesn't wire it to a CLI flag). Authenticate via the CLI first, then run the downloader.
 
 ## storacha-download
 
