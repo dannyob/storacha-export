@@ -717,9 +717,16 @@ if (EXTRACT) {
       })
 
       if (result.extracted === 0) {
-        log(`  ✗ ${u.root_cid.slice(0, 24)}... no files extracted — uploads of this shape (e.g. dir of single-block PDFs) need leaf blocks the indexer doesn't expose; raw CARs are still in ${OUTPUT_DIR}/`)
+        log(`  ✗ ${u.root_cid.slice(0, 24)}... no files extracted — uploads of this shape (dir of single-block PDFs etc.) need leaf blocks the indexer doesn't expose; raw CARs are still in ${OUTPUT_DIR}/`)
         try { fs.unlinkSync(tarPath) } catch {}
         try { fs.rmdirSync(outDir) } catch {}
+        // The warnings name every missing child — useful for recovery
+        // attempts (try fetching each CID via a public IPFS gateway).
+        if (warnings.length > 0) {
+          const warningsPath = path.join(spaceDir, `${u.root_cid}.missing.txt`)
+          fs.writeFileSync(warningsPath, warnings.join('\n') + '\n')
+          log(`     ${warnings.length} missing children listed in ${warningsPath}`)
+        }
         extractFailed++
         continue
       }
