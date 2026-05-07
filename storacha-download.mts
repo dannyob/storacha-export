@@ -29,12 +29,13 @@ files in ./cars; pass --extract to also reconstruct the original files
 under ./files/<space>/.
 
 Options:
+  --space NAME        Download just one space (case-insensitive name)
+  --all               Download every space (without this, --space is required)
+  --extract           After download, extract files to ./files/<space>/<root>/
   --output PATH       Directory for shard CAR files (default: ./cars)
-  --space NAME        Limit to a single space (case-insensitive name)
   --concurrency N     Parallel shard downloads (default: 3)
   --db PATH           SQLite progress DB (default: ./storacha-download.db)
-  --extract           After download, extract files to ./files/<space>/<root>/
-  --list-spaces       Print spaces (with sizes) and exit
+  --list-spaces       Print spaces and exit
   --login EMAIL       Log in via email link, save credentials, exit
   -h, --help          Show this help
 
@@ -47,7 +48,7 @@ First-time setup:
 
 const args = process.argv.slice(2)
 const FLAGS_WITH_VALUE = new Set(['--output', '--space', '--concurrency', '--db', '--login'])
-const BOOLEAN_FLAGS = new Set(['--list-spaces', '--extract', '-h', '--help'])
+const BOOLEAN_FLAGS = new Set(['--list-spaces', '--extract', '--all', '-h', '--help'])
 
 if (args.includes('-h') || args.includes('--help')) {
   process.stderr.write(HELP)
@@ -92,6 +93,7 @@ const DB_PATH = arg('db', './storacha-download.db')
 const LIST_SPACES = args.includes('--list-spaces')
 const LOGIN_EMAIL = arg('login', '')
 const EXTRACT = args.includes('--extract')
+const ALL = args.includes('--all')
 
 // Long timeout for large shard downloads on slow disks
 const fetchAgent = new Agent({ bodyTimeout: 600000, headersTimeout: 60000 })
@@ -107,6 +109,55 @@ function formatBytes(n: number): string {
   if (n < 1024 ** 3) return `${(n / 1024 ** 2).toFixed(1)} MiB`
   if (n < 1024 ** 4) return `${(n / 1024 ** 3).toFixed(2)} GiB`
   return `${(n / 1024 ** 4).toFixed(2)} TiB`
+}
+
+// Guess a file extension from magic bytes. Returns empty string if
+// nothing matches — caller falls back to no extension. Covers the
+// common cases an archivist downloads: PDFs, images, video, archives,
+// docs. Anything beyond that the user can `file <path>` themselves.
+function guessExtension(filePath: string): string {
+  const fd = fs.openSync(filePath, 'r')
+  const buf = Buffer.alloc(16)
+  try {
+    fs.readSync(fd, buf, 0, 16, 0)
+  } finally {
+    fs.closeSync(fd)
+  }
+  const hex = buf.toString('hex')
+  const ascii = buf.toString('ascii')
+  if (ascii.startsWith('%PDF')) return '.pdf'
+  if (hex.startsWith('89504e470d0a1a0a')) return '.png'
+  if (hex.startsWith('ffd8ff')) return '.jpg'
+  if (ascii.startsWith('GIF87a') || ascii.startsWith('GIF89a')) return '.gif'
+  if (hex.startsWith('504b0304') || hex.startsWith('504b0506') || hex.startsWith('504b0708')) return '.zip'
+  if (hex.startsWith('1f8b08')) return '.gz'
+  if (hex.startsWith('425a68')) return '.bz2'
+  if (hex.startsWith('fd377a585a00')) return '.xz'
+  if (ascii.startsWith('OggS')) return '.ogg'
+  if (ascii.startsWith('ID3') || hex.startsWith('fffb')) return '.mp3'
+  // ftyp container — bytes 4..8 spell "ftyp"
+  if (buf.toString('ascii', 4, 8) === 'ftyp') {
+    const brand = buf.toString('ascii', 8, 12)
+    if (brand.startsWith('qt') || brand.startsWith('mov')) return '.mov'
+    return '.mp4'
+  }
+  if (hex.startsWith('1a45dfa3')) return '.mkv'
+  if (ascii.startsWith('RIFF')) {
+    const sub = buf.toString('ascii', 8, 12)
+    if (sub === 'WAVE') return '.wav'
+    if (sub === 'AVI ') return '.avi'
+    if (sub === 'WEBP') return '.webp'
+  }
+  // Office docs (xlsx/docx/pptx are ZIPs but starting with PK) — already caught above
+  if (ascii.startsWith('<?xml') || ascii.startsWith('<!DOCTYPE')) return '.xml'
+  // Plain text heuristic: high proportion of printable ASCII in first 16 bytes
+  let printable = 0
+  for (let i = 0; i < buf.length; i++) {
+    const b = buf[i]
+    if ((b >= 0x20 && b < 0x7f) || b === 0x09 || b === 0x0a || b === 0x0d) printable++
+  }
+  if (printable / buf.length > 0.85) return '.txt'
+  return ''
 }
 
 // --- Login (if requested) ---
@@ -189,6 +240,18 @@ if (LIST_SPACES) {
   }
   console.log('\nTo download one space:    --space "<name>" --extract')
   console.log('To download everything:   --extract')
+  process.exit(0)
+}
+
+// Require explicit scope when downloading. Avoid silently downloading
+// every space (potentially many TB) just because the user typed
+// `npx tsx storacha-download.mts` to see what happens.
+if (!SPACE_FILTER && !ALL) {
+  console.log(`You have ${allSpaces.length} space(s). What would you like to do?\n`)
+  console.log(`  See what's there:        --list-spaces`)
+  console.log(`  Download one space:      --space "<name>" --extract`)
+  console.log(`  Download everything:     --all --extract\n`)
+  console.log(`(without --extract you get raw CAR files in ./cars; with --extract you also get reconstructed files in ./files)`)
   process.exit(0)
 }
 
@@ -655,7 +718,8 @@ if (EXTRACT) {
 
       if (result.extracted === 0) {
         log(`  ✗ ${u.root_cid.slice(0, 24)}... no files extracted — uploads of this shape (e.g. dir of single-block PDFs) need leaf blocks the indexer doesn't expose; raw CARs are still in ${OUTPUT_DIR}/`)
-        fs.unlinkSync(tarPath)
+        try { fs.unlinkSync(tarPath) } catch {}
+        try { fs.rmdirSync(outDir) } catch {}
         extractFailed++
         continue
       }
@@ -672,14 +736,38 @@ if (EXTRACT) {
         })
       })
 
+      // 3) Single-file uploads come out as <root>/<root> with no name.
+      // Flatten to <root>.<ext> with a magic-bytes type guess so the
+      // file is recognisable instead of looking like a directory CID.
+      let displayDest = outDir
+      const items = fs.readdirSync(outDir)
+      if (items.length === 1 && items[0] === u.root_cid) {
+        const inner = path.join(outDir, items[0])
+        const stat = fs.statSync(inner)
+        if (stat.isFile()) {
+          const ext = guessExtension(inner)
+          const flatPath = path.join(spaceDir, `${u.root_cid}${ext}`)
+          fs.renameSync(inner, flatPath)
+          fs.rmdirSync(outDir)
+          displayDest = flatPath
+        }
+      }
+
+      // 4) Drop the intermediate .tar — the raw CARs in ./cars are the
+      //    durable backup. Save warnings (if any) next to the extracted
+      //    output so missing-block details are recoverable.
+      try { fs.unlinkSync(tarPath) } catch {}
+      const warningsPath = path.join(spaceDir, `${u.root_cid}.warnings.txt`)
+      if (warnings.length > 0) {
+        fs.writeFileSync(warningsPath, warnings.join('\n') + '\n')
+      }
+
       const skipNote = result.skipped > 0 ? ` (${result.skipped} files skipped, missing blocks)` : ''
-      log(`  ✓ ${u.space_name}/${u.root_cid.slice(0, 16)}... → ${outDir} (${result.extracted} entries${skipNote})`)
-      // Show at most 3 sample warnings instead of dozens
+      log(`  ✓ ${u.space_name}/${u.root_cid.slice(0, 16)}... → ${displayDest} (${result.extracted} entries${skipNote})`)
       if (warnings.length > 0) {
         const samples = warnings.slice(0, 3)
         for (const w of samples) log(`    ${w}`)
-        if (warnings.length > samples.length) log(`    ...and ${warnings.length - samples.length} more (full list in ${tarPath}.warnings)`)
-        fs.writeFileSync(`${tarPath}.warnings`, warnings.join('\n') + '\n')
+        if (warnings.length > samples.length) log(`    ...and ${warnings.length - samples.length} more (see ${warningsPath})`)
       }
       extractedCount++
     } catch (err: any) {

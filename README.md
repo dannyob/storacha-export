@@ -43,8 +43,8 @@ The scripts run directly via `tsx`; there's no build step. State is kept in `./s
 # Just one space, just download (don't extract — leave you the raw CARs)
 npx tsx storacha-download.mts --space "MyArchive"
 
-# All spaces, with extraction (this can take a long time and use a lot of disk)
-npx tsx storacha-download.mts --extract
+# All spaces, with extraction (can take a long time and a lot of disk)
+npx tsx storacha-download.mts --all --extract
 
 # Resume an interrupted run — same command picks up where it left off
 npx tsx storacha-download.mts --space "MyArchive" --extract
@@ -73,8 +73,9 @@ If you already use the official Storacha CLI (`@storacha/cli`'s `storacha login`
 
 | Flag | Default | Description |
 |---|---|---|
-| `--space NAME` | (all spaces) | Download just one space, by name (case-insensitive) |
-| `--extract` | off | After download, reconstruct files into `./files/<space>/<upload-id>/` |
+| `--space NAME` | — | Download just one space, by name (case-insensitive) |
+| `--all` | — | Download every space. Either `--space` or `--all` is required |
+| `--extract` | off | After download, reconstruct files into `./files/<space>/...` |
 | `--output PATH` | `./cars` | Where to put raw CAR files |
 | `--concurrency N` | `3` | Parallel HTTP fetches |
 | `--db PATH` | `./storacha-download.db` | SQLite progress DB (the resume contract) |
