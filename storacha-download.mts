@@ -176,6 +176,7 @@ const markResolved = db.prepare(`UPDATE uploads SET shard_count = ?, updated_at 
 const getPendingAll = db.prepare(`SELECT * FROM uploads WHERE status = 'pending' AND shard_count > 0`)
 const getPendingBySpace = db.prepare(`SELECT * FROM uploads WHERE status = 'pending' AND shard_count > 0 AND space_name = ?`)
 const getUnresolved = db.prepare(`SELECT * FROM uploads WHERE shard_count = 0`)
+const getUnresolvedBySpace = db.prepare(`SELECT * FROM uploads WHERE shard_count = 0 AND space_name = ?`)
 const getShards = db.prepare(`SELECT * FROM shards WHERE upload_root = ? ORDER BY shard_order`)
 const getStats = db.prepare(`SELECT status, count(*) as n FROM uploads GROUP BY status`)
 
@@ -208,7 +209,7 @@ for (const space of spaces) {
 }
 
 // --- Phase 2: Resolve shards (page-by-page like storacha/upload-service#694) ---
-const unresolved = getUnresolved.all() as Array<{ root_cid: string; space_did: string; space_name: string }>
+const unresolved = (SPACE_FILTER ? getUnresolvedBySpace.all(SPACE_FILTER) : getUnresolved.all()) as Array<{ root_cid: string; space_did: string; space_name: string }>
 log(`Resolving shards for ${unresolved.length} uploads...`)
 
 let resolved = 0
