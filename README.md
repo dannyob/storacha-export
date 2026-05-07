@@ -1,79 +1,88 @@
 # storacha-download
 
-Two small standalone TypeScript scripts for working with Storacha / web3.storage data:
+**Get your data out of Storacha (web3.storage) before the service shuts down.** Downloads every file in your Storacha spaces and reconstructs the original directory tree on your disk.
 
-- **`storacha-download.mts`** — download every upload in your Storacha spaces as CAR shards.
-- **`car-to-tar.mts`** — convert one or more CAR files into a TAR archive of the original UnixFS files.
-
-Both scripts run directly via `tsx`. There is no compiled build step.
-
-## Install
+## Quick start
 
 ```bash
-git clone git@github.com:dannyob/storacha-export.git
+# 1. install Node 20+ (skip if you already have it)
+#    macOS:    brew install node
+#    Linux/WSL: curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.1/install.sh | bash
+#               . ~/.nvm/nvm.sh && nvm install 20
+#    Windows:  https://nodejs.org/
+
+# 2. clone this repo and install dependencies
+git clone https://github.com/dannyob/storacha-export.git
 cd storacha-export
 npm install
-```
 
-Node ≥ 20 required. There is no build step — both scripts run directly via `tsx`.
-
-## Authenticate
-
-Log in once with your email. Storacha emails you a confirmation link; click it and the script saves your credentials.
-
-```bash
+# 3. log in (use the email you registered with Storacha; click the link in your inbox)
 npx tsx storacha-download.mts --login your@email.com
-# (check your inbox; click the link; the script will exit when login is confirmed)
+
+# 4. see what's in your account
+npx tsx storacha-download.mts --list-spaces
+
+# 5. download and extract everything from a space — files end up under ./files/<space>/
+npx tsx storacha-download.mts --space "MySpaceName" --extract
 ```
 
-Credentials are stored in a [`@storacha/client`](https://www.npmjs.com/package/@storacha/client) `StoreConf` profile named `storacha-export`. On macOS the data lives in `~/Library/Preferences/storacha-export-nodejs/config.json`; on Linux, `~/.config/storacha-export-nodejs/config.json`. After the first login you don't need `--login` again.
+That's it. Your reconstructed files land under `./files/<space>/<upload-id>/`. Raw CAR files (the on-disk format Storacha uses) stay in `./cars/` as a backup.
 
-If you've already authenticated using the official Storacha CLI (`@storacha/cli`'s `storacha login`), `storacha-download` will pick up that profile too — no separate login needed.
+## What is this?
 
-## storacha-download
+Two small standalone scripts:
 
-Auths against your Storacha credentials, enumerates spaces and uploads, resolves shard locations from the Storacha indexing service, and downloads each shard from R2 as `<root-cid>.shard-N.car`.
+- **`storacha-download.mts`** — talks to Storacha, finds your data, downloads it to `./cars/`. With `--extract`, it also reconstructs the original files into `./files/`.
+- **`car-to-tar.mts`** — pure file-format converter: takes raw CAR files and emits a TAR archive of the directory tree they contain. No network. Useful if you have CAR files from any source, not just Storacha.
 
-State (spaces, uploads, shards, downloaded files) is persisted to a SQLite DB so re-running picks up where it left off.
+The scripts run directly via `tsx`; there's no build step. State is kept in `./storacha-download.db` (SQLite) so a re-run resumes where it left off — interrupt with Ctrl-C any time.
+
+## Common flows
 
 ```bash
-# Download every space's uploads to ./cars
-npx tsx storacha-download.mts --output ./cars
+# Just one space, just download (don't extract — leave you the raw CARs)
+npx tsx storacha-download.mts --space "MyArchive"
 
-# Just one space, with 5 concurrent shard fetches
-npx tsx storacha-download.mts --space DataCivica --output /store/cars --concurrency 5
+# All spaces, with extraction (this can take a long time and use a lot of disk)
+npx tsx storacha-download.mts --extract
 
-# List spaces and per-space sizes; no downloads, no DB writes
-npx tsx storacha-download.mts --list-spaces
+# Resume an interrupted run — same command picks up where it left off
+npx tsx storacha-download.mts --space "MyArchive" --extract
+
+# More parallel HTTP fetches if your network is fast
+npx tsx storacha-download.mts --space "MyArchive" --extract --concurrency 6
+
+# Convert raw CARs to a TAR archive (separately, no network)
+npx tsx car-to-tar.mts cars/<upload-id>.shard-*.car -o myupload.tar
+tar xf myupload.tar
 ```
+
+## Authentication
+
+`--login your@email.com` sends a confirmation link; once you click it the script saves credentials so subsequent runs need no flag.
+
+Credentials are stored on disk:
+- macOS: `~/Library/Preferences/w3access/storacha-export.json`
+- Linux: `~/.config/w3access/storacha-export.json`
+
+If you already use the official Storacha CLI (`@storacha/cli`'s `storacha login`), this script picks up that profile too — no separate login needed.
+
+## All options
+
+`storacha-download.mts`:
 
 | Flag | Default | Description |
 |---|---|---|
-| `--output PATH` | `./cars` | Directory for shard CAR files |
-| `--space NAME` | (all) | Limit to a single space (case-insensitive) |
-| `--concurrency N` | `3` | Parallel shard downloads |
-| `--db PATH` | `./storacha-download.db` | SQLite progress DB |
-| `--list-spaces` | — | Print spaces (with sizes) and exit |
+| `--space NAME` | (all spaces) | Download just one space, by name (case-insensitive) |
+| `--extract` | off | After download, reconstruct files into `./files/<space>/<upload-id>/` |
+| `--output PATH` | `./cars` | Where to put raw CAR files |
+| `--concurrency N` | `3` | Parallel HTTP fetches |
+| `--db PATH` | `./storacha-download.db` | SQLite progress DB (the resume contract) |
+| `--list-spaces` | — | Print spaces and exit, no downloads |
 | `--login EMAIL` | — | Log in via email link, save credentials, exit |
+| `-h, --help` | — | Show help |
 
-### SQLite schema
-
-The DB is the contract between this script and any external consumer. It has four tables: `spaces`, `uploads`, `shards`, `files`. See the `db.exec(...)` block at the top of `storacha-download.mts` for the column definitions.
-
-## car-to-tar
-
-Reads UnixFS DAGs from CAR files and emits a TAR archive of the original file tree. No network — works on any CAR.
-
-```bash
-# Convert one CAR; output goes to ./<root-cid>.tar
-npx tsx car-to-tar.mts foo.car
-
-# Pool every shard of a sharded upload
-npx tsx car-to-tar.mts <root>.shard-*.car
-
-# Pipe to tar
-npx tsx car-to-tar.mts foo.car --stdout | tar tvf -
-```
+`car-to-tar.mts`:
 
 | Flag | Description |
 |---|---|
@@ -81,7 +90,19 @@ npx tsx car-to-tar.mts foo.car --stdout | tar tvf -
 | `--stdout` | Write tar to stdout; logs go to stderr |
 | `--root CID` | Override root CID (when CAR headers are missing/disagree) |
 
-Files whose blocks can't be found are skipped with a `WARN` on stderr; the resulting tar is always valid. Exit codes: `0` on any extraction, `1` on setup failure (no CARs, root unresolvable), `2` if zero entries were extracted.
+Files whose blocks can't be found are skipped with a `WARN` on stderr; the resulting tar is always valid. Exit codes: `0` on any extraction, `1` on setup failure, `2` if zero entries extracted.
+
+## Troubleshooting
+
+**"No credentials. Run with --login..."** — first-time setup; run `--login your@email.com` and click the email link.
+
+**"0 spaces to process"** — your `--space NAME` didn't match anything. Run `--list-spaces` to see exact names; matching is case-insensitive but ignores leading/trailing whitespace, so a name like ` Flickr` (with a leading space) needs the leading space.
+
+**Long pause after "Fetching N uploads..."** — the script is downloading shards. With multiple-shard uploads you'll see one progress line per shard.
+
+**"missing block" warnings during extraction** — some files in some uploads cannot be reconstructed because the indexing service has no record of the data blocks. The CARs we did download are still saved in `./cars/`; you can also try fetching individual file CIDs from a public IPFS gateway like `https://w3s.link/ipfs/<cid>`.
+
+**Better-sqlite3 "Could not locate the bindings file"** — `npm install` should auto-rebuild it via the postinstall script, but if it doesn't, run `cd node_modules/better-sqlite3 && npm run build-release` to force a rebuild from source. Needs Python and a C++ compiler.
 
 ## Tests
 
@@ -89,7 +110,7 @@ Files whose blocks can't be found are skipped with a `WARN` on stderr; the resul
 npm test
 ```
 
-Tests cover `car-to-tar` end-to-end against in-memory CARs (build with `ipfs-unixfs-importer`, convert, parse the tar back). `storacha-download.mts` is not unit-tested — auth and the indexing service make it integration territory; behavior is verified in production.
+Covers `car-to-tar` end-to-end against in-memory CARs. `storacha-download.mts` is not unit-tested — auth and the indexing service make it integration territory.
 
 ## License
 

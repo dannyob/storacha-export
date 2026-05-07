@@ -143,46 +143,84 @@ const allSpaces: Array<{ did: string; name: string }> = client.spaces().map((s: 
   name: s.name || '(unnamed)',
 }))
 const spaces = SPACE_FILTER
-  ? allSpaces.filter(s => s.name.toLowerCase() === SPACE_FILTER.toLowerCase())
+  ? allSpaces.filter(s => s.name.toLowerCase().trim() === SPACE_FILTER.toLowerCase().trim())
   : allSpaces
 
 // --- List spaces and exit (if --list-spaces) ---
 if (LIST_SPACES) {
-  console.log(`${spaces.length} space(s):`)
-  for (const s of spaces) console.log(`  ${s.name} - ${s.did}`)
+  console.log(`Found ${allSpaces.length} space(s):`)
+  for (const s of allSpaces) console.log(`  • ${s.name}`)
 
-  // Per-space sizes via usage report (last full month → now)
+  // Try to fetch per-space sizes; gracefully degrade.
   const now = new Date()
   const from = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - 1, 1))
   const period = { from, to: now }
-  let totalBytes = 0n
-  console.log('\nUsage:')
+  const sizes = new Map<string, bigint>()
   for (const account of Object.values(client.accounts())) {
     try {
       const subs = await (account as any).capability.subscription.list((account as any).did())
       for (const { consumers } of subs.results) {
         for (const spaceDid of consumers) {
-          const space = spaces.find(s => s.did === spaceDid)
-          if (!space) continue
+          if (!allSpaces.some(s => s.did === spaceDid)) continue
           try {
             const result = await client.capability.usage.report(spaceDid, period)
             let total = 0n
             for (const [, report] of Object.entries(result)) {
               total += BigInt((report as any)?.size?.final || 0)
             }
-            totalBytes += total
-            const gb = Number(total) / (1024 ** 3)
-            console.log(`  ${space.name}: ${gb.toFixed(1)} GiB`)
-          } catch {
-            console.log(`  ${space.name}: (no access to usage)`)
-          }
+            sizes.set(spaceDid, total)
+          } catch {}
         }
       }
     } catch {}
   }
-  const tb = Number(totalBytes) / (1024 ** 4)
-  console.log(`\nTotal: ${tb.toFixed(2)} TiB`)
+  if (sizes.size > 0) {
+    console.log('\nUsage (last month):')
+    let totalBytes = 0n
+    for (const s of allSpaces) {
+      const size = sizes.get(s.did) ?? null
+      if (size === null) continue
+      totalBytes += size
+      const gb = Number(size) / (1024 ** 3)
+      console.log(`  ${s.name}: ${gb.toFixed(1)} GiB`)
+    }
+    const tb = Number(totalBytes) / (1024 ** 4)
+    console.log(`  Total: ${tb.toFixed(2)} TiB`)
+  }
+  console.log('\nTo download one space:    --space "<name>" --extract')
+  console.log('To download everything:   --extract')
   process.exit(0)
+}
+
+// Helpful error when --space doesn't match.
+if (SPACE_FILTER && spaces.length === 0) {
+  console.error(`No space found matching: "${SPACE_FILTER}"`)
+  // Suggest closest by simple substring + case-insensitive name.
+  const target = SPACE_FILTER.toLowerCase()
+  const candidates = allSpaces
+    .map(s => ({ s, name: s.name.toLowerCase() }))
+    .filter(({ name }) => name.includes(target) || target.includes(name) || levenshtein(name, target) <= 3)
+    .map(({ s }) => s.name)
+  if (candidates.length > 0) {
+    console.error(`Did you mean: ${candidates.slice(0, 5).map(c => `"${c}"`).join(', ')}?`)
+  } else {
+    console.error(`Run with --list-spaces to see all ${allSpaces.length} spaces.`)
+  }
+  process.exit(1)
+}
+
+function levenshtein(a: string, b: string): number {
+  const dp = Array.from({ length: a.length + 1 }, () => new Array(b.length + 1).fill(0))
+  for (let i = 0; i <= a.length; i++) dp[i][0] = i
+  for (let j = 0; j <= b.length; j++) dp[0][j] = j
+  for (let i = 1; i <= a.length; i++) {
+    for (let j = 1; j <= b.length; j++) {
+      dp[i][j] = a[i - 1] === b[j - 1]
+        ? dp[i - 1][j - 1]
+        : 1 + Math.min(dp[i - 1][j], dp[i][j - 1], dp[i - 1][j - 1])
+    }
+  }
+  return dp[a.length][b.length]
 }
 
 log(`${spaces.length} space(s) to process`)
@@ -602,11 +640,12 @@ if (EXTRACT) {
     // 1) CARs → TAR (in memory, sort of — convert pools blocks)
     const tarPath = path.join(spaceDir, `${u.root_cid}.tar`)
     const tarStream = fs.createWriteStream(tarPath)
+    const warnings: string[] = []
     try {
       const result = await convert({
         carPaths: shardPaths,
         out: tarStream,
-        log: (m) => log(`    ${m}`),
+        log: (m) => warnings.push(m),
       })
       tarStream.end()
       await new Promise<void>((resolve, reject) => {
@@ -615,7 +654,7 @@ if (EXTRACT) {
       })
 
       if (result.extracted === 0) {
-        log(`  ✗ ${u.root_cid.slice(0, 24)}... no entries extracted (incomplete CARs?)`)
+        log(`  ✗ ${u.root_cid.slice(0, 24)}... no files extracted — uploads of this shape (e.g. dir of single-block PDFs) need leaf blocks the indexer doesn't expose; raw CARs are still in ${OUTPUT_DIR}/`)
         fs.unlinkSync(tarPath)
         extractFailed++
         continue
@@ -632,10 +671,16 @@ if (EXTRACT) {
           else reject(new Error(`tar -xf exited ${code}: ${stderr.trim()}`))
         })
       })
-      // 3) keep the .tar around as an audit trail; could add --no-keep-tar later
 
       const skipNote = result.skipped > 0 ? ` (${result.skipped} files skipped, missing blocks)` : ''
-      log(`  ✓ ${u.space_name}/${u.root_cid.slice(0, 16)}... → ${outDir}${skipNote}`)
+      log(`  ✓ ${u.space_name}/${u.root_cid.slice(0, 16)}... → ${outDir} (${result.extracted} entries${skipNote})`)
+      // Show at most 3 sample warnings instead of dozens
+      if (warnings.length > 0) {
+        const samples = warnings.slice(0, 3)
+        for (const w of samples) log(`    ${w}`)
+        if (warnings.length > samples.length) log(`    ...and ${warnings.length - samples.length} more (full list in ${tarPath}.warnings)`)
+        fs.writeFileSync(`${tarPath}.warnings`, warnings.join('\n') + '\n')
+      }
       extractedCount++
     } catch (err: any) {
       log(`  ✗ ${u.root_cid.slice(0, 24)}... extract failed: ${err?.message ?? err}`)
