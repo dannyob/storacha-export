@@ -371,14 +371,117 @@ for (const [spaceDid, uploads] of bySpace) {
   }
 }
 
-if (resolveFailed > 0) {
+// --- Phase 2B: URL-pattern fallback for uploads still unresolved ---
+//
+// Some uploads (notably older sharded uploads) don't have per-shard
+// assert/location claims indexed. The upload root, however, often has
+// an assert/location claim pointing at one of its shards' CARs in
+// carpark-prod-N R2 with a regular path:
+//
+//   https://carpark-prod-N.r2.w3s.link/<shard-cid>/<shard-cid>.car
+//
+// Once we know the bucket from one shard's URL, we can construct URLs
+// for every shard.list() entry without further indexer help.
+const stillUnresolved = (SPACE_FILTER ? getUnresolvedBySpace.all(SPACE_FILTER) : getUnresolved.all()) as Array<{ root_cid: string; space_did: string; space_name: string }>
+
+let fallbackResolved = 0
+let fallbackFailed = 0
+
+if (stillUnresolved.length > 0) {
+  log(`Trying URL-pattern fallback for ${stillUnresolved.length} unresolved upload(s)...`)
+  // Group by space for setCurrentSpace efficiency
+  const fallbackBySpace = new Map<string, typeof stillUnresolved>()
+  for (const u of stillUnresolved) {
+    if (!fallbackBySpace.has(u.space_did)) fallbackBySpace.set(u.space_did, [])
+    fallbackBySpace.get(u.space_did)!.push(u)
+  }
+  for (const [spaceDid, uploads] of fallbackBySpace) {
+    client.setCurrentSpace(spaceDid)
+    // Batch-query upload root multihashes for assert/location
+    for (let page = 0; page < uploads.length; page += 100) {
+      const batch = uploads.slice(page, page + 100)
+      const rootHashes = batch.map(u => CID.parse(u.root_cid).multihash)
+      const rootUrlMap = new Map<string, string>() // b58(root multihash) → url
+      try {
+        const result = await indexer.queryClaims({ hashes: rootHashes, kind: 'standard' })
+        if (result.ok) {
+          for (const claim of result.ok.claims.values()) {
+            if (claim.type !== 'assert/location') continue
+            const bytes = 'digest' in claim.content ? claim.content.digest : claim.content.multihash?.bytes
+            if (!bytes) continue
+            const url = claim.location?.[0]?.toString()
+            if (!url) continue
+            const b58 = base58btc.encode(bytes)
+            if (!rootUrlMap.has(b58)) rootUrlMap.set(b58, url)
+          }
+        }
+      } catch {}
+
+      for (const u of batch) {
+        const rootB58 = base58btc.encode(CID.parse(u.root_cid).multihash.bytes)
+        const sampleUrl = rootUrlMap.get(rootB58)
+        if (!sampleUrl) {
+          // No root claim either — genuinely unresolvable.
+          log(`  ✗ ${u.root_cid.slice(0, 24)}... no upload-root claim either; cannot construct URLs`)
+          fallbackFailed++
+          continue
+        }
+        // Extract bucket origin from the sample URL.
+        const m = sampleUrl.match(/^(https?:\/\/[^/]+)\//)
+        if (!m) {
+          log(`  ✗ ${u.root_cid.slice(0, 24)}... unrecognised URL shape: ${sampleUrl}`)
+          fallbackFailed++
+          continue
+        }
+        const bucket = m[1]
+        // Re-list shards (Phase 2A may have failed earlier; redo cheaply).
+        let shardLinks: any[]
+        try {
+          const root = CID.parse(u.root_cid)
+          shardLinks = []
+          let cur: string | undefined
+          do {
+            const r = await client.capability.upload.shard.list(root, { cursor: cur })
+            shardLinks.push(...r.results)
+            cur = r.cursor
+          } while (cur)
+        } catch (err: any) {
+          log(`  ✗ ${u.root_cid.slice(0, 24)}... shard.list failed: ${err?.message ?? err}`)
+          fallbackFailed++
+          continue
+        }
+        if (shardLinks.length === 0) {
+          log(`  ✗ ${u.root_cid.slice(0, 24)}... no shards listed`)
+          fallbackFailed++
+          continue
+        }
+        // Construct one URL per shard using the bucket pattern.
+        const storeBatch = db.transaction(() => {
+          for (let i = 0; i < shardLinks.length; i++) {
+            const s = shardLinks[i]
+            const url = `${bucket}/${s.toString()}/${s.toString()}.car`
+            insertShard.run(u.root_cid, s.toString(), url, null, i, spaceDid)
+          }
+          markResolved.run(shardLinks.length, u.root_cid)
+        })
+        storeBatch()
+        log(`  ✓ ${u.root_cid.slice(0, 24)}... ${shardLinks.length} shards via URL pattern (${bucket})`)
+        fallbackResolved++
+      }
+    }
+  }
+  log(`URL-pattern fallback: ${fallbackResolved} resolved, ${fallbackFailed} still unresolved`)
+}
+
+const totalResolveFailed = resolveFailed - fallbackResolved + fallbackFailed
+if (totalResolveFailed > 0) {
   const parts: string[] = []
   if (failedListShards) parts.push(`${failedListShards} couldn't list shards`)
   if (failedNoShards) parts.push(`${failedNoShards} had no shards`)
-  if (failedNoClaims) parts.push(`${failedNoClaims} missing location claim`)
-  log(`Shard resolution: ${resolved} resolved, ${resolveFailed} failed (${parts.join(', ')})`)
+  if (failedNoClaims - fallbackResolved > 0) parts.push(`${failedNoClaims - fallbackResolved} missing location claim`)
+  log(`Shard resolution: ${resolved + fallbackResolved} resolved, ${totalResolveFailed} failed${parts.length ? ' (' + parts.join(', ') + ')' : ''}`)
 } else {
-  log(`Shard resolution: ${resolved} resolved, ${resolveFailed} failed`)
+  log(`Shard resolution: ${resolved + fallbackResolved} resolved, 0 failed`)
 }
 
 // --- Phase 3: Download shards ---
