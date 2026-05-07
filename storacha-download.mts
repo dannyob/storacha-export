@@ -20,7 +20,59 @@ import { Client as IndexingClient } from '@storacha/indexing-service-client'
 import { Agent } from 'undici'
 
 // --- Config ---
+const HELP = `Usage: storacha-download [options]
+
+Download every upload in your Storacha spaces as CAR shards.
+
+Options:
+  --output PATH       Directory for shard CAR files (default: ./cars)
+  --space NAME        Limit to a single space (case-insensitive)
+  --concurrency N     Parallel shard downloads (default: 3)
+  --db PATH           SQLite progress DB (default: ./storacha-download.db)
+  --list-spaces       Print spaces (with sizes) and exit
+  --login EMAIL       Log in via email link, save credentials, exit
+  -h, --help          Show this help
+
+First-run auth: run with --login your@email.com, click the link in your
+inbox; subsequent runs need no flag.
+`
+
 const args = process.argv.slice(2)
+const FLAGS_WITH_VALUE = new Set(['--output', '--space', '--concurrency', '--db', '--login'])
+const BOOLEAN_FLAGS = new Set(['--list-spaces', '-h', '--help'])
+
+if (args.includes('-h') || args.includes('--help')) {
+  process.stderr.write(HELP)
+  process.exit(0)
+}
+
+// Validate args: reject unknown flags (silently ignoring them caused
+// real confusion when a typo like --email made the script fall through
+// to cached credentials with no warning).
+for (let i = 0; i < args.length; i++) {
+  const a = args[i]
+  if (BOOLEAN_FLAGS.has(a)) continue
+  if (FLAGS_WITH_VALUE.has(a)) {
+    if (!args[i + 1]) {
+      console.error(`error: ${a} requires a value`)
+      process.exit(1)
+    }
+    i++
+    continue
+  }
+  if (a.startsWith('-')) {
+    if (a === '--email') {
+      console.error(`error: unknown flag --email; did you mean --login?`)
+    } else {
+      console.error(`error: unknown flag: ${a}`)
+    }
+    process.stderr.write('\n' + HELP)
+    process.exit(1)
+  }
+  console.error(`error: unexpected positional argument: ${a}`)
+  process.exit(1)
+}
+
 function arg(name: string, def: string): string {
   const i = args.indexOf(`--${name}`)
   return i >= 0 && args[i + 1] ? args[i + 1] : def
