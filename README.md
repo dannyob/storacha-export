@@ -19,21 +19,16 @@ Node ≥ 20 required. There is no build step — both scripts run directly via `
 
 ## Authenticate
 
-`storacha-download` reads credentials from a [`@storacha/client`](https://www.npmjs.com/package/@storacha/client) `StoreConf` on disk. It looks for either of two profiles, in order:
-
-1. `storacha-export` (this project's own profile, if you've used a previous version)
-2. `storacha-cli` (the profile written by the official Storacha CLI)
-
-The simplest route is to install the CLI and log in:
+Log in once with your email. Storacha emails you a confirmation link; click it and the script saves your credentials.
 
 ```bash
-npm install -g @storacha/cli
-storacha login your@email.com   # follow the email-link confirmation
+npx tsx storacha-download.mts --login your@email.com
+# (check your inbox; click the link; the script will exit when login is confirmed)
 ```
 
-That populates the `storacha-cli` profile, which `storacha-download` then picks up automatically. On macOS the data lives in `~/Library/Preferences/storacha-cli-nodejs/config.json`; on Linux, `~/.config/storacha-cli-nodejs/config.json`.
+Credentials are stored in a [`@storacha/client`](https://www.npmjs.com/package/@storacha/client) `StoreConf` profile named `storacha-export`. On macOS the data lives in `~/Library/Preferences/storacha-export-nodejs/config.json`; on Linux, `~/.config/storacha-export-nodejs/config.json`. After the first login you don't need `--login` again.
 
-`storacha-download` does **not** currently support inline login (the `auth.mts` module exports a `login()` function, but the script doesn't wire it to a CLI flag). Authenticate via the CLI first, then run the downloader.
+If you've already authenticated using the official Storacha CLI (`@storacha/cli`'s `storacha login`), `storacha-download` will pick up that profile too — no separate login needed.
 
 ## storacha-download
 
@@ -59,6 +54,7 @@ npx tsx storacha-download.mts --list-spaces
 | `--concurrency N` | `3` | Parallel shard downloads |
 | `--db PATH` | `./storacha-download.db` | SQLite progress DB |
 | `--list-spaces` | — | Print spaces (with sizes) and exit |
+| `--login EMAIL` | — | Log in via email link, save credentials, exit |
 
 ### SQLite schema
 
