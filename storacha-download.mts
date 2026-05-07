@@ -179,6 +179,9 @@ const getUnresolved = db.prepare(`SELECT * FROM uploads WHERE shard_count = 0`)
 const getUnresolvedBySpace = db.prepare(`SELECT * FROM uploads WHERE shard_count = 0 AND space_name = ?`)
 const getShards = db.prepare(`SELECT * FROM shards WHERE upload_root = ? ORDER BY shard_order`)
 const getStats = db.prepare(`SELECT status, count(*) as n FROM uploads GROUP BY status`)
+const getStatsBySpace = db.prepare(`SELECT status, count(*) as n FROM uploads WHERE space_name = ? GROUP BY status`)
+const getResolutionStats = db.prepare(`SELECT CASE WHEN shard_count = 0 THEN 'unresolved' ELSE 'resolved' END as state, count(*) as n FROM uploads WHERE status = 'pending' GROUP BY state`)
+const getResolutionStatsBySpace = db.prepare(`SELECT CASE WHEN shard_count = 0 THEN 'unresolved' ELSE 'resolved' END as state, count(*) as n FROM uploads WHERE status = 'pending' AND space_name = ? GROUP BY state`)
 
 // --- Phase 1: Enumerate uploads ---
 for (const space of spaces) {
@@ -214,6 +217,9 @@ log(`Resolving shards for ${unresolved.length} uploads...`)
 
 let resolved = 0
 let resolveFailed = 0
+let failedListShards = 0
+let failedNoShards = 0
+let failedNoClaims = 0
 
 // Group by space for setCurrentSpace efficiency
 const bySpace = new Map<string, typeof unresolved>()
@@ -243,7 +249,9 @@ for (const [spaceDid, uploads] of bySpace) {
           cur = result.cursor
         } while (cur)
         uploadsWithShards.push({ root: u.root_cid, shardLinks })
-      } catch {
+      } catch (err: any) {
+        log(`  ✗ ${u.root_cid.slice(0, 24)}... shard.list failed: ${err?.message ?? err}`)
+        failedListShards++
         resolveFailed++
       }
     }
@@ -272,9 +280,16 @@ for (const [spaceDid, uploads] of bySpace) {
     } catch {}
 
     // Step 3: store resolved shards
+    const failureNotes: string[] = []
     const storeBatch = db.transaction(() => {
       for (const { root, shardLinks } of uploadsWithShards) {
-        let allResolved = true
+        if (shardLinks.length === 0) {
+          failureNotes.push(`  ✗ ${root.slice(0, 24)}... no shards listed for this upload`)
+          failedNoShards++
+          resolveFailed++
+          continue
+        }
+        let missing = 0
         for (let i = 0; i < shardLinks.length; i++) {
           const link = shardLinks[i]
           const b58 = base58btc.encode(link.multihash.bytes)
@@ -282,18 +297,21 @@ for (const [spaceDid, uploads] of bySpace) {
           if (claim) {
             insertShard.run(root, link.toString(), claim.url, claim.size, i, spaceDid)
           } else {
-            allResolved = false
+            missing++
           }
         }
-        if (allResolved && shardLinks.length > 0) {
+        if (missing === 0) {
           markResolved.run(shardLinks.length, root)
           resolved++
         } else {
+          failureNotes.push(`  ✗ ${root.slice(0, 24)}... no location claim for ${missing}/${shardLinks.length} shard(s)`)
+          failedNoClaims++
           resolveFailed++
         }
       }
     })
     storeBatch()
+    for (const note of failureNotes) log(note)
 
     if ((page + 20) % 100 < 20) {
       log(`  ${page + batch.length}/${uploads.length} checked, ${resolved} resolved`)
@@ -301,7 +319,15 @@ for (const [spaceDid, uploads] of bySpace) {
   }
 }
 
-log(`Shard resolution: ${resolved} resolved, ${resolveFailed} failed`)
+if (resolveFailed > 0) {
+  const parts: string[] = []
+  if (failedListShards) parts.push(`${failedListShards} couldn't list shards`)
+  if (failedNoShards) parts.push(`${failedNoShards} had no shards`)
+  if (failedNoClaims) parts.push(`${failedNoClaims} missing location claim`)
+  log(`Shard resolution: ${resolved} resolved, ${resolveFailed} failed (${parts.join(', ')})`)
+} else {
+  log(`Shard resolution: ${resolved} resolved, ${resolveFailed} failed`)
+}
 
 // --- Phase 3: Download shards ---
 fs.mkdirSync(OUTPUT_DIR, { recursive: true })
@@ -359,9 +385,18 @@ const elapsed = ((Date.now() - t0) / 1000).toFixed(0)
 
 log(`\nComplete: ${downloaded} downloaded, ${downloadFailed} failed`)
 log(`Total: ${formatBytes(totalBytes)} in ${elapsed}s`)
-log(`\nStatus:`)
-for (const row of getStats.all() as any[]) {
-  log(`  ${row.status}: ${row.n}`)
+log(`\nStatus${SPACE_FILTER ? ` (${SPACE_FILTER})` : ''}:`)
+const statsRows = (SPACE_FILTER ? getStatsBySpace.all(SPACE_FILTER) : getStats.all()) as any[]
+const resolutionRows = (SPACE_FILTER ? getResolutionStatsBySpace.all(SPACE_FILTER) : getResolutionStats.all()) as any[]
+const resByState = Object.fromEntries(resolutionRows.map(r => [r.state, r.n]))
+for (const row of statsRows) {
+  if (row.status === 'pending') {
+    const r = resByState.resolved ?? 0
+    const u = resByState.unresolved ?? 0
+    log(`  pending: ${row.n} (resolved: ${r}, unresolved: ${u})`)
+  } else {
+    log(`  ${row.status}: ${row.n}`)
+  }
 }
 
 db.close()
