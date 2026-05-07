@@ -8,7 +8,8 @@
     "car-to-tar": "./car-to-tar.mts"
   },
   "scripts": {
-    "test": "vitest run"
+    "test": "vitest run",
+    "postinstall": "node -e \"try{new(require('better-sqlite3'))(':memory:').close()}catch{console.log('building better-sqlite3 from source...');require('child_process').execSync('cd node_modules/better-sqlite3 && npm run build-release',{stdio:'inherit'})}\""
   },
   "license": "AGPL-3.0-or-later",
   "engines": {
