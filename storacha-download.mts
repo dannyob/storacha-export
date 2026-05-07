@@ -8,11 +8,12 @@
  * Usage:
  *   npx tsx storacha-download.mts [--output /store/cars] [--space DataCivica] [--concurrency 3]
  *   npx tsx storacha-download.mts --list-spaces
+ *   npx tsx storacha-download.mts --login your@email.com
  */
 import Database from 'better-sqlite3'
 import fs from 'node:fs'
 import path from 'node:path'
-import { detectCredentials } from './auth.mts'
+import { detectCredentials, login } from './auth.mts'
 import { CID } from 'multiformats/cid'
 import { base58btc } from 'multiformats/bases/base58'
 import { Client as IndexingClient } from '@storacha/indexing-service-client'
@@ -29,6 +30,7 @@ const SPACE_FILTER = arg('space', '')
 const CONCURRENCY = parseInt(arg('concurrency', '3'), 10)
 const DB_PATH = arg('db', './storacha-download.db')
 const LIST_SPACES = args.includes('--list-spaces')
+const LOGIN_EMAIL = arg('login', '')
 
 // Long timeout for large shard downloads on slow disks
 const fetchAgent = new Agent({ bodyTimeout: 600000, headersTimeout: 60000 })
@@ -46,10 +48,32 @@ function formatBytes(n: number): string {
   return `${(n / 1024 ** 4).toFixed(2)} TiB`
 }
 
+// --- Login (if requested) ---
+if (LOGIN_EMAIL) {
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(LOGIN_EMAIL)) {
+    console.error(`error: --login expects an email address, got: ${LOGIN_EMAIL}`)
+    process.exit(1)
+  }
+  log(`Sending login link to ${LOGIN_EMAIL}...`)
+  log('Check your email and click the confirmation link. This may take a few minutes.')
+  try {
+    await login(LOGIN_EMAIL)
+    log('Login confirmed. Credentials saved to the storacha-export profile.')
+    log('You can now run storacha-download.mts without --login.')
+    process.exit(0)
+  } catch (err: any) {
+    console.error(`login failed: ${err?.message ?? err}`)
+    process.exit(1)
+  }
+}
+
 // --- Auth ---
 log('Authenticating...')
 const creds = await detectCredentials()
-if (!creds.hasCredentials) { console.error('No credentials'); process.exit(1) }
+if (!creds.hasCredentials) {
+  console.error('No credentials. Run with --login your@email.com to log in.')
+  process.exit(1)
+}
 const client = creds.client
 const indexer = new IndexingClient()
 

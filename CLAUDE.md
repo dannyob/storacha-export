@@ -26,7 +26,7 @@ npx tsx car-to-tar.mts <car-file>...          # CAR → TAR
 
 Three phases, all in one file:
 
-1. Auth via `auth.mts` (uses an existing `storacha-cli` or `storacha-export` credential profile from `~/Library/Preferences/storacha-*` etc.)
+1. Auth via `auth.mts`. Reads an existing `storacha-export` or `storacha-cli` credential profile from `~/Library/Preferences/storacha-*` (macOS) / `~/.config/storacha-*` (Linux). `--login <email>` triggers an inline login flow that writes to the `storacha-export` profile.
 2. Enumerate uploads per space, cached in SQLite (`spaces`, `uploads` tables).
 3. Resolve shard locations via the indexing-service client (`shards` table), then download each shard's CAR from R2 (`files` table).
 
