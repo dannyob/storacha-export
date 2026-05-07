@@ -13,7 +13,9 @@
 import Database from 'better-sqlite3'
 import fs from 'node:fs'
 import path from 'node:path'
+import { spawn } from 'node:child_process'
 import { detectCredentials, login } from './auth.mts'
+import { convert } from './car-to-tar.mts'
 import { CID } from 'multiformats/cid'
 import { base58btc } from 'multiformats/bases/base58'
 import { Client as IndexingClient } from '@storacha/indexing-service-client'
@@ -22,24 +24,30 @@ import { Agent } from 'undici'
 // --- Config ---
 const HELP = `Usage: storacha-download [options]
 
-Download every upload in your Storacha spaces as CAR shards.
+Download every upload in your Storacha spaces. By default produces CAR
+files in ./cars; pass --extract to also reconstruct the original files
+under ./files/<space>/.
 
 Options:
   --output PATH       Directory for shard CAR files (default: ./cars)
-  --space NAME        Limit to a single space (case-insensitive)
+  --space NAME        Limit to a single space (case-insensitive name)
   --concurrency N     Parallel shard downloads (default: 3)
   --db PATH           SQLite progress DB (default: ./storacha-download.db)
+  --extract           After download, extract files to ./files/<space>/<root>/
   --list-spaces       Print spaces (with sizes) and exit
   --login EMAIL       Log in via email link, save credentials, exit
   -h, --help          Show this help
 
-First-run auth: run with --login your@email.com, click the link in your
-inbox; subsequent runs need no flag.
+First-time setup:
+  npx tsx storacha-download.mts --login your@email.com  (use the email
+    your Storacha account is registered with — click the link in your inbox)
+  npx tsx storacha-download.mts --list-spaces           (see what's there)
+  npx tsx storacha-download.mts --space "MyArchive" --extract
 `
 
 const args = process.argv.slice(2)
 const FLAGS_WITH_VALUE = new Set(['--output', '--space', '--concurrency', '--db', '--login'])
-const BOOLEAN_FLAGS = new Set(['--list-spaces', '-h', '--help'])
+const BOOLEAN_FLAGS = new Set(['--list-spaces', '--extract', '-h', '--help'])
 
 if (args.includes('-h') || args.includes('--help')) {
   process.stderr.write(HELP)
@@ -83,6 +91,7 @@ const CONCURRENCY = parseInt(arg('concurrency', '3'), 10)
 const DB_PATH = arg('db', './storacha-download.db')
 const LIST_SPACES = args.includes('--list-spaces')
 const LOGIN_EMAIL = arg('login', '')
+const EXTRACT = args.includes('--extract')
 
 // Long timeout for large shard downloads on slow disks
 const fetchAgent = new Agent({ bodyTimeout: 600000, headersTimeout: 60000 })
@@ -510,7 +519,9 @@ async function worker(id: number) {
 
     try {
       let uploadBytes = 0
+      const t0 = Date.now()
       for (const shard of shards) {
+        const shardStart = Date.now()
         const res = await fetch(shard.location_url, { dispatcher: fetchAgent } as any)
         if (!res.ok) throw new Error(`HTTP ${res.status}`)
         const carBytes = new Uint8Array(await res.arrayBuffer())
@@ -520,11 +531,22 @@ async function worker(id: number) {
         const filePath = path.join(OUTPUT_DIR, filename)
         fs.writeFileSync(filePath, carBytes)
         insertFile.run(rootCid, shard.shard_order, filename, carBytes.length)
+
+        // Per-shard progress for multi-shard uploads — silence between
+        // start and finish on big uploads (10s of GB) made users think
+        // the script had hung.
+        if (shards.length > 1) {
+          const elapsed = (Date.now() - shardStart) / 1000
+          const rate = elapsed > 0 ? carBytes.length / elapsed : 0
+          log(`[${id}]   shard ${shard.shard_order + 1}/${shards.length} ${formatBytes(carBytes.length)} in ${elapsed.toFixed(1)}s (${formatBytes(rate)}/s)`)
+        }
       }
       markDone.run(uploadBytes, rootCid)
       downloaded++
       totalBytes += uploadBytes
-      log(`[${id}] ✓ ${rootCid.slice(0, 24)}... ${shards.length} shards ${formatBytes(uploadBytes)} [${downloaded}/${pending.length}]`)
+      const totalElapsed = (Date.now() - t0) / 1000
+      const avgRate = totalElapsed > 0 ? uploadBytes / totalElapsed : 0
+      log(`[${id}] ✓ ${rootCid.slice(0, 24)}... ${shards.length} shards ${formatBytes(uploadBytes)} (avg ${formatBytes(avgRate)}/s) [${downloaded}/${pending.length}]`)
     } catch (err: any) {
       markError.run(rootCid)
       downloadFailed++
@@ -540,6 +562,93 @@ const elapsed = ((Date.now() - t0) / 1000).toFixed(0)
 
 log(`\nComplete: ${downloaded} downloaded, ${downloadFailed} failed`)
 log(`Total: ${formatBytes(totalBytes)} in ${elapsed}s`)
+
+// --- Phase 4: Extract files (if --extract) ---
+if (EXTRACT) {
+  const FILES_DIR = './files'
+  fs.mkdirSync(FILES_DIR, { recursive: true })
+  log(`\nExtracting files into ${FILES_DIR}/...`)
+
+  // Look at every upload that's status=done with shards on disk.
+  const completed = (SPACE_FILTER
+    ? db.prepare(`SELECT root_cid, space_name FROM uploads WHERE status='done' AND space_name = ?`).all(SPACE_FILTER)
+    : db.prepare(`SELECT root_cid, space_name FROM uploads WHERE status='done'`).all()) as Array<{ root_cid: string; space_name: string }>
+
+  let extractedCount = 0
+  let extractFailed = 0
+  for (const u of completed) {
+    const shardPaths: string[] = []
+    let i = 0
+    while (true) {
+      const p = path.join(OUTPUT_DIR, `${u.root_cid}.shard-${i}.car`)
+      if (!fs.existsSync(p)) break
+      shardPaths.push(p)
+      i++
+    }
+    if (shardPaths.length === 0) {
+      log(`  (no shards on disk for ${u.root_cid.slice(0, 24)}..., skipping)`)
+      continue
+    }
+
+    const spaceDir = path.join(FILES_DIR, u.space_name.replace(/\//g, '_').trim() || 'unnamed')
+    const outDir = path.join(spaceDir, u.root_cid)
+    if (fs.existsSync(outDir) && fs.readdirSync(outDir).length > 0) {
+      log(`  ✓ already extracted: ${outDir}`)
+      extractedCount++
+      continue
+    }
+    fs.mkdirSync(outDir, { recursive: true })
+
+    // 1) CARs → TAR (in memory, sort of — convert pools blocks)
+    const tarPath = path.join(spaceDir, `${u.root_cid}.tar`)
+    const tarStream = fs.createWriteStream(tarPath)
+    try {
+      const result = await convert({
+        carPaths: shardPaths,
+        out: tarStream,
+        log: (m) => log(`    ${m}`),
+      })
+      tarStream.end()
+      await new Promise<void>((resolve, reject) => {
+        tarStream.on('finish', () => resolve())
+        tarStream.on('error', reject)
+      })
+
+      if (result.extracted === 0) {
+        log(`  ✗ ${u.root_cid.slice(0, 24)}... no entries extracted (incomplete CARs?)`)
+        fs.unlinkSync(tarPath)
+        extractFailed++
+        continue
+      }
+
+      // 2) TAR → directory tree via system tar (POSIX)
+      await new Promise<void>((resolve, reject) => {
+        const proc = spawn('tar', ['-xf', tarPath, '-C', outDir], { stdio: 'pipe' })
+        let stderr = ''
+        proc.stderr.on('data', (d) => { stderr += d.toString() })
+        proc.on('error', reject)
+        proc.on('close', (code) => {
+          if (code === 0) resolve()
+          else reject(new Error(`tar -xf exited ${code}: ${stderr.trim()}`))
+        })
+      })
+      // 3) keep the .tar around as an audit trail; could add --no-keep-tar later
+
+      const skipNote = result.skipped > 0 ? ` (${result.skipped} files skipped, missing blocks)` : ''
+      log(`  ✓ ${u.space_name}/${u.root_cid.slice(0, 16)}... → ${outDir}${skipNote}`)
+      extractedCount++
+    } catch (err: any) {
+      log(`  ✗ ${u.root_cid.slice(0, 24)}... extract failed: ${err?.message ?? err}`)
+      extractFailed++
+    }
+  }
+
+  log(`\nExtracted ${extractedCount} upload(s) to ${FILES_DIR}/${extractFailed > 0 ? `, ${extractFailed} failed` : ''}`)
+  if (extractedCount > 0) {
+    log(`Your files are under ${FILES_DIR}/<space>/<upload-cid>/`)
+  }
+}
+
 log(`\nStatus${SPACE_FILTER ? ` (${SPACE_FILTER})` : ''}:`)
 const statsRows = (SPACE_FILTER ? getStatsBySpace.all(SPACE_FILTER) : getStats.all()) as any[]
 const resolutionRows = (SPACE_FILTER ? getResolutionStatsBySpace.all(SPACE_FILTER) : getResolutionStats.all()) as any[]
