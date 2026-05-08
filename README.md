@@ -97,11 +97,24 @@ Files whose blocks can't be found are skipped with a `WARN` on stderr; the resul
 
 **"No credentials. Run with --login..."** — first-time setup; run `--login your@email.com` and click the email link.
 
-**"0 spaces to process"** — your `--space NAME` didn't match anything. Run `--list-spaces` to see exact names; matching is case-insensitive but ignores leading/trailing whitespace, so a name like ` Flickr` (with a leading space) needs the leading space.
+**"No space found matching: ..."** — case-insensitive name match. Run `--list-spaces` to see the exact names; if you can't find the right one we try a "Did you mean: ..." suggestion based on edit distance.
 
-**Long pause after "Fetching N uploads..."** — the script is downloading shards. With multiple-shard uploads you'll see one progress line per shard.
+**Long pause after "Fetching N uploads..."** — the script is downloading shards. With multiple-shard uploads you'll see one progress line per shard, including transfer rate.
 
-**"missing block" warnings during extraction** — some files in some uploads cannot be reconstructed because the indexing service has no record of the data blocks. The CARs we did download are still saved in `./cars/`; you can also try fetching individual file CIDs from a public IPFS gateway like `https://w3s.link/ipfs/<cid>`.
+**Some files are missing after extraction.** Storacha's indexing service occasionally has no usable storage location for some content (this is a real, persistent gap, not a flaky lookup). When this happens we still write everything we *can* recover, plus three sidecar files next to it under `./files/<space>/`:
+
+- `<root>.warnings.txt` — partial extract: original filename + CID for each file that couldn't be retrieved
+- `<root>.missing.txt` — total extract failure: same format, lists every child of the upload root
+- `<root>.recover.sh` — runnable shell script that tries to fetch each missing file from the public IPFS gateway (`https://w3s.link/ipfs/<cid>`), which sometimes succeeds where our direct lookup didn't
+
+To attempt recovery of an upload's missing files:
+
+```bash
+cd ./files/<space>
+sh ./<root>.recover.sh   # creates files in the current directory; lines that fail print "FAILED <cid> <name>"
+```
+
+If the gateway also can't find a CID, that data is genuinely unreachable through the published API; the raw CARs in `./cars/` are still saved as the lowest-level backup in case storacha publishes a recovery tool later.
 
 **Better-sqlite3 "Could not locate the bindings file"** — `npm install` should auto-rebuild it via the postinstall script, but if it doesn't, run `cd node_modules/better-sqlite3 && npm run build-release` to force a rebuild from source. Needs Python and a C++ compiler.
 
