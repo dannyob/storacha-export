@@ -1,6 +1,6 @@
-# storacha-download
+# storacha-export
 
-**Get your data out of Storacha (web3.storage) before the service shuts down.** Downloads every file in your Storacha spaces and reconstructs the original directory tree on your disk.
+**Rescue your data out of Storacha (web3.storage) before shutdown.** Downloads every upload from your Storacha spaces and reconstructs the original directory tree on your disk.
 
 ## Quick start
 
@@ -17,13 +17,13 @@ cd storacha-export
 npm install
 
 # 3. log in (use the email you registered with Storacha; click the link in your inbox)
-npx tsx storacha-download.mts --login your@email.com
+npx tsx storacha-export.mts --login your@email.com
 
 # 4. see what's in your account
-npx tsx storacha-download.mts --list-spaces
+npx tsx storacha-export.mts --list-spaces
 
 # 5. download and extract everything from a space — files end up under ./files/<space>/
-npx tsx storacha-download.mts --space "MySpaceName" --extract
+npx tsx storacha-export.mts --space "MySpaceName" --extract
 ```
 
 That's it. Your reconstructed files land under `./files/<space>/<upload-id>/`. Raw CAR files (the on-disk format Storacha uses) stay in `./cars/` as a backup.
@@ -32,25 +32,25 @@ That's it. Your reconstructed files land under `./files/<space>/<upload-id>/`. R
 
 Two small standalone scripts:
 
-- **`storacha-download.mts`** — talks to Storacha, finds your data, downloads it to `./cars/`. With `--extract`, it also reconstructs the original files into `./files/`.
+- **`storacha-export.mts`** — talks to Storacha, finds your data, downloads it to `./cars/`. With `--extract`, it also reconstructs the original files into `./files/`.
 - **`car-to-tar.mts`** — pure file-format converter: takes raw CAR files and emits a TAR archive of the directory tree they contain. No network. Useful if you have CAR files from any source, not just Storacha.
 
-The scripts run directly via `tsx`; there's no build step. State is kept in `./storacha-download.db` (SQLite) so a re-run resumes where it left off — interrupt with Ctrl-C any time.
+The scripts run directly via `tsx`; there's no build step. State is kept in `./storacha-export.db` (SQLite) so a re-run resumes where it left off — interrupt with Ctrl-C any time. (If you have a `./storacha-download.db` from an earlier version it'll be picked up automatically — the script renamed but the schema is the same.)
 
 ## Common flows
 
 ```bash
 # Just one space, just download (don't extract — leave you the raw CARs)
-npx tsx storacha-download.mts --space "MyArchive"
+npx tsx storacha-export.mts --space "MyArchive"
 
 # All spaces, with extraction (can take a long time and a lot of disk)
-npx tsx storacha-download.mts --all --extract
+npx tsx storacha-export.mts --all --extract
 
 # Resume an interrupted run — same command picks up where it left off
-npx tsx storacha-download.mts --space "MyArchive" --extract
+npx tsx storacha-export.mts --space "MyArchive" --extract
 
 # More parallel HTTP fetches if your network is fast
-npx tsx storacha-download.mts --space "MyArchive" --extract --concurrency 6
+npx tsx storacha-export.mts --space "MyArchive" --extract --concurrency 6
 
 # Convert raw CARs to a TAR archive (separately, no network)
 npx tsx car-to-tar.mts cars/<upload-id>.shard-*.car -o myupload.tar
@@ -69,7 +69,7 @@ If you already use the official Storacha CLI (`@storacha/cli`'s `storacha login`
 
 ## All options
 
-`storacha-download.mts`:
+`storacha-export.mts`:
 
 | Flag | Default | Description |
 |---|---|---|
@@ -78,7 +78,7 @@ If you already use the official Storacha CLI (`@storacha/cli`'s `storacha login`
 | `--extract` | off | After download, reconstruct files into `./files/<space>/...` |
 | `--output PATH` | `./cars` | Where to put raw CAR files |
 | `--concurrency N` | `3` | Parallel HTTP fetches |
-| `--db PATH` | `./storacha-download.db` | SQLite progress DB (the resume contract) |
+| `--db PATH` | `./storacha-export.db` (or legacy `./storacha-download.db` if found) | SQLite progress DB (the resume contract) |
 | `--list-spaces` | — | Print spaces and exit, no downloads |
 | `--login EMAIL` | — | Log in via email link, save credentials, exit |
 | `-h, --help` | — | Show help |
@@ -111,7 +111,7 @@ Files whose blocks can't be found are skipped with a `WARN` on stderr; the resul
 npm test
 ```
 
-Covers `car-to-tar` end-to-end against in-memory CARs. `storacha-download.mts` is not unit-tested — auth and the indexing service make it integration territory.
+Covers `car-to-tar` end-to-end against in-memory CARs. `storacha-export.mts` is not unit-tested — auth and the indexing service make it integration territory.
 
 ## License
 

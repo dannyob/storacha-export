@@ -1,14 +1,15 @@
 #!/usr/bin/env npx tsx
 /**
- * storacha-download: Download all Storacha space content as CAR files.
+ * storacha-export: Download Storacha space content as CAR files,
+ * optionally reconstructing the original file tree on disk.
  *
  * Clean standalone script — no dashboard, no kubo, no repair logic.
  * Resolves shards via indexing service, downloads from R2, writes to disk.
  *
  * Usage:
- *   npx tsx storacha-download.mts [--output /store/cars] [--space DataCivica] [--concurrency 3]
- *   npx tsx storacha-download.mts --list-spaces
- *   npx tsx storacha-download.mts --login your@email.com
+ *   npx tsx storacha-export.mts [--output /store/cars] [--space DataCivica] [--concurrency 3]
+ *   npx tsx storacha-export.mts --list-spaces
+ *   npx tsx storacha-export.mts --login your@email.com
  */
 import Database from 'better-sqlite3'
 import fs from 'node:fs'
@@ -22,7 +23,7 @@ import { Client as IndexingClient } from '@storacha/indexing-service-client'
 import { Agent } from 'undici'
 
 // --- Config ---
-const HELP = `Usage: storacha-download [options]
+const HELP = `Usage: storacha-export [options]
 
 Download every upload in your Storacha spaces. By default produces CAR
 files in ./cars; pass --extract to also reconstruct the original files
@@ -34,16 +35,16 @@ Options:
   --extract           After download, extract files to ./files/<space>/<root>/
   --output PATH       Directory for shard CAR files (default: ./cars)
   --concurrency N     Parallel shard downloads (default: 3)
-  --db PATH           SQLite progress DB (default: ./storacha-download.db)
+  --db PATH           SQLite progress DB (default: ./storacha-export.db)
   --list-spaces       Print spaces and exit
   --login EMAIL       Log in via email link, save credentials, exit
   -h, --help          Show this help
 
 First-time setup:
-  npx tsx storacha-download.mts --login your@email.com  (use the email
+  npx tsx storacha-export.mts --login your@email.com  (use the email
     your Storacha account is registered with — click the link in your inbox)
-  npx tsx storacha-download.mts --list-spaces           (see what's there)
-  npx tsx storacha-download.mts --space "MyArchive" --extract
+  npx tsx storacha-export.mts --list-spaces            (see what's there)
+  npx tsx storacha-export.mts --space "MyArchive" --extract
 `
 
 const args = process.argv.slice(2)
@@ -89,7 +90,16 @@ function arg(name: string, def: string): string {
 const OUTPUT_DIR = arg('output', './cars')
 const SPACE_FILTER = arg('space', '')
 const CONCURRENCY = parseInt(arg('concurrency', '3'), 10)
-const DB_PATH = arg('db', './storacha-download.db')
+// Default DB filename. If a legacy storacha-download.db sits in the
+// cwd and the new name doesn't, fall back to the old one so users with
+// existing resume state aren't reset by the script rename.
+const DEFAULT_DB = (() => {
+  const newName = './storacha-export.db'
+  const oldName = './storacha-download.db'
+  if (!fs.existsSync(newName) && fs.existsSync(oldName)) return oldName
+  return newName
+})()
+const DB_PATH = arg('db', DEFAULT_DB)
 const LIST_SPACES = args.includes('--list-spaces')
 const LOGIN_EMAIL = arg('login', '')
 const EXTRACT = args.includes('--extract')
@@ -171,7 +181,7 @@ if (LOGIN_EMAIL) {
   try {
     await login(LOGIN_EMAIL)
     log('Login confirmed. Credentials saved to the storacha-export profile.')
-    log('You can now run storacha-download.mts without --login.')
+    log('You can now run storacha-export.mts without --login.')
     process.exit(0)
   } catch (err: any) {
     console.error(`login failed: ${err?.message ?? err}`)
@@ -245,7 +255,7 @@ if (LIST_SPACES) {
 
 // Require explicit scope when downloading. Avoid silently downloading
 // every space (potentially many TB) just because the user typed
-// `npx tsx storacha-download.mts` to see what happens.
+// `npx tsx storacha-export.mts` to see what happens.
 if (!SPACE_FILTER && !ALL) {
   console.log(`You have ${allSpaces.length} space(s). What would you like to do?\n`)
   console.log(`  See what's there:        --list-spaces`)
