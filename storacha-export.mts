@@ -161,6 +161,45 @@ function guessExtension(filePath: string): string {
   return ''
 }
 
+// Build a runnable shell script that tries to fetch each missing
+// child via a public IPFS gateway. This is the most concrete "what
+// do I do now?" answer we can give for uploads where the indexing
+// service didn't return a usable storage location for some/all of
+// the children. The gateway sometimes succeeds where our direct
+// shard lookup fails (different resolution path).
+function buildRecoveryScript(warnings: string[], rootCid: string): { script: string; count: number } {
+  // Single-quote shell escape: wrap in '...', escape internal ' as '\''.
+  const sq = (s: string) => `'${s.replace(/'/g, `'\\''`)}'`
+  const seen = new Set<string>()
+  const lines: string[] = []
+  for (const w of warnings) {
+    const m = w.match(/^WARN: (?:truncated|missing child) (.+) \(([a-z0-9]+)\):/)
+    if (!m) continue
+    const [, name, cid] = m
+    const key = `${cid}\t${name}`
+    if (seen.has(key)) continue
+    seen.add(key)
+    const dir = path.dirname(name)
+    if (dir && dir !== '.') lines.push(`mkdir -p ${sq(dir)}`)
+    // ?filename= hint helps gateways serve a sensible Content-Disposition.
+    const enc = encodeURIComponent(path.basename(name))
+    lines.push(`curl -fL -o ${sq(name)} "https://w3s.link/ipfs/${cid}?filename=${enc}" || echo "FAILED ${cid} ${name}"`)
+  }
+  if (lines.length === 0) return { script: '', count: 0 }
+  const header = [
+    `#!/bin/sh`,
+    `# Attempt recovery of missing files from upload ${rootCid}`,
+    `# via the public IPFS gateway (https://w3s.link).`,
+    `#`,
+    `# Each line below tries one missing file. Lines that fail print`,
+    `# "FAILED <cid> <name>" so you can grep them out.`,
+    `#`,
+    `# Run with: sh ${path.basename('recover.sh')}`,
+    ``,
+  ]
+  return { script: header.concat(lines).join('\n') + '\n', count: lines.length }
+}
+
 // --- Login (if requested) ---
 if (LOGIN_EMAIL) {
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(LOGIN_EMAIL)) {
@@ -722,12 +761,18 @@ if (EXTRACT) {
         log(`  ✗ ${u.root_cid.slice(0, 24)}... no files extracted — uploads of this shape (dir of single-block PDFs etc.) need leaf blocks the indexer doesn't expose; raw CARs are still in ${OUTPUT_DIR}/`)
         try { fs.unlinkSync(tarPath) } catch {}
         try { fs.rmdirSync(outDir) } catch {}
-        // The warnings name every missing child — useful for recovery
-        // attempts (try fetching each CID via a public IPFS gateway).
         if (warnings.length > 0) {
-          const warningsPath = path.join(spaceDir, `${u.root_cid}.missing.txt`)
-          fs.writeFileSync(warningsPath, warnings.join('\n') + '\n')
-          log(`     ${warnings.length} missing children listed in ${warningsPath}`)
+          const missingPath = path.join(spaceDir, `${u.root_cid}.missing.txt`)
+          fs.writeFileSync(missingPath, warnings.join('\n') + '\n')
+          const { script, count } = buildRecoveryScript(warnings, u.root_cid)
+          if (count > 0) {
+            const recoverPath = path.join(spaceDir, `${u.root_cid}.recover.sh`)
+            fs.writeFileSync(recoverPath, script)
+            try { fs.chmodSync(recoverPath, 0o755) } catch {}
+            log(`     ${count} missing files. Try: sh ${recoverPath}`)
+          } else {
+            log(`     missing children listed in ${missingPath}`)
+          }
         }
         extractFailed++
         continue
@@ -763,12 +808,19 @@ if (EXTRACT) {
       }
 
       // 4) Drop the intermediate .tar — the raw CARs in ./cars are the
-      //    durable backup. Save warnings (if any) next to the extracted
-      //    output so missing-block details are recoverable.
+      //    durable backup. Save warnings + a recovery script (if any)
+      //    next to the extracted output.
       try { fs.unlinkSync(tarPath) } catch {}
-      const warningsPath = path.join(spaceDir, `${u.root_cid}.warnings.txt`)
+      let recoverPath = ''
       if (warnings.length > 0) {
+        const warningsPath = path.join(spaceDir, `${u.root_cid}.warnings.txt`)
         fs.writeFileSync(warningsPath, warnings.join('\n') + '\n')
+        const { script, count: recoverCount } = buildRecoveryScript(warnings, u.root_cid)
+        if (recoverCount > 0) {
+          recoverPath = path.join(spaceDir, `${u.root_cid}.recover.sh`)
+          fs.writeFileSync(recoverPath, script)
+          try { fs.chmodSync(recoverPath, 0o755) } catch {}
+        }
       }
 
       const skipNote = result.skipped > 0 ? ` (${result.skipped} files skipped, missing blocks)` : ''
@@ -776,7 +828,8 @@ if (EXTRACT) {
       if (warnings.length > 0) {
         const samples = warnings.slice(0, 3)
         for (const w of samples) log(`    ${w}`)
-        if (warnings.length > samples.length) log(`    ...and ${warnings.length - samples.length} more (see ${warningsPath})`)
+        if (warnings.length > samples.length) log(`    ...and ${warnings.length - samples.length} more`)
+        if (recoverPath) log(`    Try recovery: sh ${recoverPath}`)
       }
       extractedCount++
     } catch (err: any) {
@@ -789,6 +842,23 @@ if (EXTRACT) {
   if (extractedCount > 0) {
     log(`Your files are under ${FILES_DIR}/<space>/ (one directory or file per upload).`)
   }
+  if (extractFailed > 0 || warningsAcrossAllUploads()) {
+    log(`Some files were missing. For each upload with a <root>.recover.sh next to it,`)
+    log(`run that script to try fetching the missing files via a public IPFS gateway.`)
+  }
+}
+
+// Used only by the post-extract summary above; declared here to keep
+// the message-emitting code uncluttered.
+function warningsAcrossAllUploads(): boolean {
+  // Cheap proxy: did any upload write a .recover.sh next to it?
+  if (!fs.existsSync('./files')) return false
+  for (const space of fs.readdirSync('./files')) {
+    const dir = path.join('./files', space)
+    if (!fs.statSync(dir).isDirectory()) continue
+    if (fs.readdirSync(dir).some(f => f.endsWith('.recover.sh'))) return true
+  }
+  return false
 }
 
 log(`\nStatus${SPACE_FILTER ? ` (${SPACE_FILTER})` : ''}:`)
