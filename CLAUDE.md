@@ -6,10 +6,10 @@ Notes for Claude Code working in this repo.
 
 Two flat standalone TypeScript scripts:
 
-- `storacha-download.mts` — download Storacha space content as CAR shards
+- `storacha-export.mts` — download Storacha space content as CAR shards
 - `car-to-tar.mts` — convert CAR file(s) to a TAR archive of the original UnixFS files
 
-`auth.mts` is a small shared module used only by `storacha-download.mts`.
+`auth.mts` is a small shared module used only by `storacha-export.mts`.
 
 There is no `src/` directory. There is no compiled output. Scripts run via `tsx` directly. The `bin` entries in `package.json` point at the `.mts` files.
 
@@ -18,13 +18,13 @@ There is no `src/` directory. There is no compiled output. Scripts run via `tsx`
 ```bash
 npm install      # install deps
 npm test         # vitest run
-npx tsx storacha-download.mts --list-spaces   # quick auth/connectivity check
+npx tsx storacha-export.mts --list-spaces   # quick auth/connectivity check
 npx tsx car-to-tar.mts <car-file>...          # CAR → TAR
 ```
 
-## storacha-download.mts
+## storacha-export.mts
 
-Three phases, all in one file:
+Renamed from `storacha-download.mts` on 2026-05-08 (matches the repo / package name). Three phases, all in one file:
 
 1. Auth via `auth.mts`. Reads an existing `storacha-export` or `storacha-cli` credential profile from `~/Library/Preferences/storacha-*` (macOS) / `~/.config/storacha-*` (Linux). `--login <email>` triggers an inline login flow that writes to the `storacha-export` profile.
 2. Enumerate uploads per space, cached in SQLite (`spaces`, `uploads` tables).

@@ -1,10 +1,10 @@
 {
-  "name": "storacha-download",
-  "version": "0.1.0",
-  "description": "Download Storacha space content as CAR shards; convert CAR to TAR.",
+  "name": "storacha-export",
+  "version": "0.2.0",
+  "description": "Rescue your data out of Storacha (web3.storage) before shutdown — downloads every upload and reconstructs the original file tree on disk.",
   "type": "module",
   "bin": {
-    "storacha-download": "./storacha-download.mts",
+    "storacha-export": "./storacha-export.mts",
     "car-to-tar": "./car-to-tar.mts"
   },
   "scripts": {
