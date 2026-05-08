@@ -90,16 +90,7 @@ function arg(name: string, def: string): string {
 const OUTPUT_DIR = arg('output', './cars')
 const SPACE_FILTER = arg('space', '')
 const CONCURRENCY = parseInt(arg('concurrency', '3'), 10)
-// Default DB filename. If a legacy storacha-download.db sits in the
-// cwd and the new name doesn't, fall back to the old one so users with
-// existing resume state aren't reset by the script rename.
-const DEFAULT_DB = (() => {
-  const newName = './storacha-export.db'
-  const oldName = './storacha-download.db'
-  if (!fs.existsSync(newName) && fs.existsSync(oldName)) return oldName
-  return newName
-})()
-const DB_PATH = arg('db', DEFAULT_DB)
+const DB_PATH = arg('db', './storacha-export.db')
 const LIST_SPACES = args.includes('--list-spaces')
 const LOGIN_EMAIL = arg('login', '')
 const EXTRACT = args.includes('--extract')

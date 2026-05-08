@@ -35,7 +35,7 @@ Two small standalone scripts:
 - **`storacha-export.mts`** — talks to Storacha, finds your data, downloads it to `./cars/`. With `--extract`, it also reconstructs the original files into `./files/`.
 - **`car-to-tar.mts`** — pure file-format converter: takes raw CAR files and emits a TAR archive of the directory tree they contain. No network. Useful if you have CAR files from any source, not just Storacha.
 
-The scripts run directly via `tsx`; there's no build step. State is kept in `./storacha-export.db` (SQLite) so a re-run resumes where it left off — interrupt with Ctrl-C any time. (If you have a `./storacha-download.db` from an earlier version it'll be picked up automatically — the script renamed but the schema is the same.)
+The scripts run directly via `tsx`; there's no build step. State is kept in `./storacha-export.db` (SQLite) so a re-run resumes where it left off — interrupt with Ctrl-C any time.
 
 ## Common flows
 
@@ -78,7 +78,7 @@ If you already use the official Storacha CLI (`@storacha/cli`'s `storacha login`
 | `--extract` | off | After download, reconstruct files into `./files/<space>/...` |
 | `--output PATH` | `./cars` | Where to put raw CAR files |
 | `--concurrency N` | `3` | Parallel HTTP fetches |
-| `--db PATH` | `./storacha-export.db` (or legacy `./storacha-download.db` if found) | SQLite progress DB (the resume contract) |
+| `--db PATH` | `./storacha-export.db` | SQLite progress DB (the resume contract) |
 | `--list-spaces` | — | Print spaces and exit, no downloads |
 | `--login EMAIL` | — | Log in via email link, save credentials, exit |
 | `-h, --help` | — | Show help |
