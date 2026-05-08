@@ -106,20 +106,24 @@ Case-insensitive name match. Run `--list-spaces` to see the exact names. If you 
 The script is downloading shards. With multiple-shard uploads you'll see one progress line per shard, including transfer rate.
 
 ### Some files are missing after extraction
-Sometimes Storacha's indexing service has no usable storage location for an upload's content. The gap is in the indexing data itself, so a retry won't help. When this happens, the script still writes everything it can recover and drops three sidecar files next to it under `./files/<space>/`:
+Sometimes Storacha's indexing service has no usable storage location for an upload's content. The gap is in the indexing data itself, so a retry won't help. When this happens, the script still writes everything it can recover and drops a per-upload list of what's missing into `./files/<space>/<root>.missing.txt`. The format is one line per file, tab-separated:
 
-- `<root>.warnings.txt`: partial extract. Original filename and CID for each file the script couldn't retrieve.
-- `<root>.missing.txt`: total extract failure. Same format, listing every child of the upload root.
-- `<root>.recover.sh`: runnable shell script. Tries to fetch each missing file from the public IPFS gateway (`https://w3s.link/ipfs/<cid>`), which sometimes succeeds where the direct lookup didn't.
-
-To attempt recovery of an upload's missing files:
-
-```bash
-cd ./files/<space>
-sh ./<root>.recover.sh   # creates files in the current directory; lines that fail print "FAILED <cid> <name>"
+```
+<cid>	<filename>
 ```
 
-If the gateway also can't find a CID, that data isn't reachable through the published API. The raw CARs in `./cars/` stay around as a lowest-level backup in case storacha publishes a recovery tool later.
+A shipped helper script reads that list and tries each one through a public IPFS gateway (`https://w3s.link/ipfs/<cid>`), which sometimes succeeds where the direct lookup didn't:
+
+```bash
+# One upload at a time:
+cd ./files/<space>
+sh ../../recover.sh <root>.missing.txt
+
+# Or batch every missing list across every space:
+find ./files -name '*.missing.txt' | xargs -n1 sh ./recover.sh
+```
+
+For each entry the helper prints `OK <cid> <filename>` or `FAILED <cid> <filename>`, so you can grep results or re-run only the failures (edit the .missing.txt to drop lines you've already got). If the gateway can't find a CID either, that data isn't reachable through the published API; the raw CARs in `./cars/` stay around as a lowest-level backup in case storacha publishes a recovery tool later.
 
 ### Better-sqlite3 "Could not locate the bindings file"
 `npm install` should auto-rebuild it via the postinstall script. If it doesn't, run `cd node_modules/better-sqlite3 && npm run build-release` to force a rebuild from source. Needs Python and a C++ compiler.
