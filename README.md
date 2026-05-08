@@ -22,31 +22,32 @@ npx tsx storacha-export.mts --login your@email.com
 # 4. see what's in your account
 npx tsx storacha-export.mts --list-spaces
 
-# 5. download and extract everything from a space — files end up under ./files/<space>/
+# 5. download and extract everything from a space.
+#    Files end up under ./files/<space>/.
 npx tsx storacha-export.mts --space "MySpaceName" --extract
 ```
 
-That's it. Your reconstructed files land under `./files/<space>/<upload-id>/`. Raw CAR files (the on-disk format Storacha uses) stay in `./cars/` as a backup.
+That's it. Your reconstructed files land under `./files/<space>/`. Raw CAR files (the on-disk format Storacha uses) stay in `./cars/` as a backup.
 
 ## What is this?
 
 Two small standalone scripts:
 
-- **`storacha-export.mts`** — talks to Storacha, finds your data, downloads it to `./cars/`. With `--extract`, it also reconstructs the original files into `./files/`.
-- **`car-to-tar.mts`** — pure file-format converter: takes raw CAR files and emits a TAR archive of the directory tree they contain. No network. Useful if you have CAR files from any source, not just Storacha.
+- `storacha-export.mts` talks to Storacha, finds your data, and downloads it to `./cars/`. With `--extract`, it also reconstructs the original files into `./files/`.
+- `car-to-tar.mts` is a pure file-format converter. It takes raw CAR files and emits a TAR archive of the directory tree they contain. No network, no Storacha-specific knowledge; useful for CAR files from any source.
 
-The scripts run directly via `tsx`; there's no build step. State is kept in `./storacha-export.db` (SQLite) so a re-run resumes where it left off — interrupt with Ctrl-C any time.
+The scripts run directly via `tsx`; there's no build step. State is kept in `./storacha-export.db` (SQLite) so a re-run resumes where it left off. Interrupt with Ctrl-C any time.
 
 ## Common flows
 
 ```bash
-# Just one space, just download (don't extract — leave you the raw CARs)
+# Just one space, download only (no extraction; you get raw CARs)
 npx tsx storacha-export.mts --space "MyArchive"
 
 # All spaces, with extraction (can take a long time and a lot of disk)
 npx tsx storacha-export.mts --all --extract
 
-# Resume an interrupted run — same command picks up where it left off
+# Resume an interrupted run. Same command picks up where it left off.
 npx tsx storacha-export.mts --space "MyArchive" --extract
 
 # More parallel HTTP fetches if your network is fast
@@ -59,13 +60,13 @@ tar xf myupload.tar
 
 ## Authentication
 
-`--login your@email.com` sends a confirmation link; once you click it the script saves credentials so subsequent runs need no flag.
+`--login your@email.com` sends a confirmation link. Once you click it, the script saves credentials so subsequent runs need no flag.
 
 Credentials are stored on disk:
 - macOS: `~/Library/Preferences/w3access/storacha-export.json`
 - Linux: `~/.config/w3access/storacha-export.json`
 
-If you already use the official Storacha CLI (`@storacha/cli`'s `storacha login`), this script picks up that profile too — no separate login needed.
+If you already use the official Storacha CLI (`@storacha/cli`'s `storacha login`), this script picks up that profile too, with no separate login needed.
 
 ## All options
 
@@ -95,17 +96,21 @@ Files whose blocks can't be found are skipped with a `WARN` on stderr; the resul
 
 ## Troubleshooting
 
-**"No credentials. Run with --login..."** — first-time setup; run `--login your@email.com` and click the email link.
+### "No credentials. Run with --login..."
+First-time setup. Run `--login your@email.com` and click the email link.
 
-**"No space found matching: ..."** — case-insensitive name match. Run `--list-spaces` to see the exact names; if you can't find the right one we try a "Did you mean: ..." suggestion based on edit distance.
+### "No space found matching: ..."
+Case-insensitive name match. Run `--list-spaces` to see the exact names. If you mistype a name, the script tries a "Did you mean: ..." suggestion based on edit distance.
 
-**Long pause after "Fetching N uploads..."** — the script is downloading shards. With multiple-shard uploads you'll see one progress line per shard, including transfer rate.
+### Long pause after "Fetching N uploads..."
+The script is downloading shards. With multiple-shard uploads you'll see one progress line per shard, including transfer rate.
 
-**Some files are missing after extraction.** Storacha's indexing service occasionally has no usable storage location for some content (this is a real, persistent gap, not a flaky lookup). When this happens we still write everything we *can* recover, plus three sidecar files next to it under `./files/<space>/`:
+### Some files are missing after extraction
+Sometimes Storacha's indexing service has no usable storage location for an upload's content. The gap is in the indexing data itself, so a retry won't help. When this happens, the script still writes everything it can recover and drops three sidecar files next to it under `./files/<space>/`:
 
-- `<root>.warnings.txt` — partial extract: original filename + CID for each file that couldn't be retrieved
-- `<root>.missing.txt` — total extract failure: same format, lists every child of the upload root
-- `<root>.recover.sh` — runnable shell script that tries to fetch each missing file from the public IPFS gateway (`https://w3s.link/ipfs/<cid>`), which sometimes succeeds where our direct lookup didn't
+- `<root>.warnings.txt`: partial extract. Original filename and CID for each file the script couldn't retrieve.
+- `<root>.missing.txt`: total extract failure. Same format, listing every child of the upload root.
+- `<root>.recover.sh`: runnable shell script. Tries to fetch each missing file from the public IPFS gateway (`https://w3s.link/ipfs/<cid>`), which sometimes succeeds where the direct lookup didn't.
 
 To attempt recovery of an upload's missing files:
 
@@ -114,9 +119,10 @@ cd ./files/<space>
 sh ./<root>.recover.sh   # creates files in the current directory; lines that fail print "FAILED <cid> <name>"
 ```
 
-If the gateway also can't find a CID, that data is genuinely unreachable through the published API; the raw CARs in `./cars/` are still saved as the lowest-level backup in case storacha publishes a recovery tool later.
+If the gateway also can't find a CID, that data isn't reachable through the published API. The raw CARs in `./cars/` stay around as a lowest-level backup in case storacha publishes a recovery tool later.
 
-**Better-sqlite3 "Could not locate the bindings file"** — `npm install` should auto-rebuild it via the postinstall script, but if it doesn't, run `cd node_modules/better-sqlite3 && npm run build-release` to force a rebuild from source. Needs Python and a C++ compiler.
+### Better-sqlite3 "Could not locate the bindings file"
+`npm install` should auto-rebuild it via the postinstall script. If it doesn't, run `cd node_modules/better-sqlite3 && npm run build-release` to force a rebuild from source. Needs Python and a C++ compiler.
 
 ## Tests
 
@@ -124,7 +130,7 @@ If the gateway also can't find a CID, that data is genuinely unreachable through
 npm test
 ```
 
-Covers `car-to-tar` end-to-end against in-memory CARs. `storacha-export.mts` is not unit-tested — auth and the indexing service make it integration territory.
+Covers `car-to-tar` end-to-end against in-memory CARs. `storacha-export.mts` is not unit-tested. Auth and the indexing service make it integration territory.
 
 ## License
 
