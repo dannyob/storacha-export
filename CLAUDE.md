@@ -24,7 +24,7 @@ npx tsx car-to-tar.mts <car-file>...          # CAR → TAR
 
 ## storacha-export.mts
 
-Renamed from `storacha-download.mts` on 2026-05-08 (matches the repo / package name). Three phases, all in one file:
+Three phases, all in one file:
 
 1. Auth via `auth.mts`. Reads an existing `storacha-export` or `storacha-cli` credential profile from `~/Library/Preferences/storacha-*` (macOS) / `~/.config/storacha-*` (Linux). `--login <email>` triggers an inline login flow that writes to the `storacha-export` profile.
 2. Enumerate uploads per space, cached in SQLite (`spaces`, `uploads` tables).
