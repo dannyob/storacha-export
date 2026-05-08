@@ -227,7 +227,7 @@ if (LIST_SPACES) {
     } catch {}
   }
   if (sizes.size > 0) {
-    console.log('\nUsage (last month):')
+    console.log('\nStorage used (current billing period):')
     let totalBytes = 0n
     for (const s of allSpaces) {
       const size = sizes.get(s.did) ?? null
@@ -240,7 +240,7 @@ if (LIST_SPACES) {
     console.log(`  Total: ${tb.toFixed(2)} TiB`)
   }
   console.log('\nTo download one space:    --space "<name>" --extract')
-  console.log('To download everything:   --extract')
+  console.log('To download everything:   --all --extract')
   process.exit(0)
 }
 
@@ -499,7 +499,7 @@ let fallbackResolved = 0
 let fallbackFailed = 0
 
 if (stillUnresolved.length > 0) {
-  log(`Trying URL-pattern fallback for ${stillUnresolved.length} unresolved upload(s)...`)
+  log(`Trying alternate lookup for ${stillUnresolved.length} upload(s) without direct shard locations...`)
   // Group by space for setCurrentSpace efficiency
   const fallbackBySpace = new Map<string, typeof stillUnresolved>()
   for (const u of stillUnresolved) {
@@ -532,15 +532,14 @@ if (stillUnresolved.length > 0) {
         const rootB58 = base58btc.encode(CID.parse(u.root_cid).multihash.bytes)
         const sampleUrl = rootUrlMap.get(rootB58)
         if (!sampleUrl) {
-          // No root claim either — genuinely unresolvable.
-          log(`  ✗ ${u.root_cid.slice(0, 24)}... no upload-root claim either; cannot construct URLs`)
+          log(`  ✗ ${u.root_cid.slice(0, 24)}... no storage location found for this upload`)
           fallbackFailed++
           continue
         }
         // Extract bucket origin from the sample URL.
         const m = sampleUrl.match(/^(https?:\/\/[^/]+)\//)
         if (!m) {
-          log(`  ✗ ${u.root_cid.slice(0, 24)}... unrecognised URL shape: ${sampleUrl}`)
+          log(`  ✗ ${u.root_cid.slice(0, 24)}... unrecognised storage URL: ${sampleUrl}`)
           fallbackFailed++
           continue
         }
@@ -557,12 +556,12 @@ if (stillUnresolved.length > 0) {
             cur = r.cursor
           } while (cur)
         } catch (err: any) {
-          log(`  ✗ ${u.root_cid.slice(0, 24)}... shard.list failed: ${err?.message ?? err}`)
+          log(`  ✗ ${u.root_cid.slice(0, 24)}... couldn't list parts: ${err?.message ?? err}`)
           fallbackFailed++
           continue
         }
         if (shardLinks.length === 0) {
-          log(`  ✗ ${u.root_cid.slice(0, 24)}... no shards listed`)
+          log(`  ✗ ${u.root_cid.slice(0, 24)}... upload has no parts on record`)
           fallbackFailed++
           continue
         }
@@ -576,12 +575,12 @@ if (stillUnresolved.length > 0) {
           markResolved.run(shardLinks.length, u.root_cid)
         })
         storeBatch()
-        log(`  ✓ ${u.root_cid.slice(0, 24)}... ${shardLinks.length} shards via URL pattern (${bucket})`)
+        log(`  ✓ ${u.root_cid.slice(0, 24)}... ${shardLinks.length} part(s) located via upload root`)
         fallbackResolved++
       }
     }
   }
-  log(`URL-pattern fallback: ${fallbackResolved} resolved, ${fallbackFailed} still unresolved`)
+  log(`Alternate lookup: ${fallbackResolved} resolved, ${fallbackFailed} still unresolved`)
 }
 
 const totalResolveFailed = resolveFailed - fallbackResolved + fallbackFailed
@@ -662,8 +661,10 @@ const workers = Array.from({ length: CONCURRENCY }, (_, i) => worker(i))
 await Promise.all(workers)
 const elapsed = ((Date.now() - t0) / 1000).toFixed(0)
 
-log(`\nComplete: ${downloaded} downloaded, ${downloadFailed} failed`)
-log(`Total: ${formatBytes(totalBytes)} in ${elapsed}s`)
+if (downloaded > 0 || downloadFailed > 0) {
+  log(`\nComplete: ${downloaded} downloaded, ${downloadFailed} failed`)
+  if (totalBytes > 0) log(`Total: ${formatBytes(totalBytes)} in ${elapsed}s`)
+}
 
 // --- Phase 4: Extract files (if --extract) ---
 if (EXTRACT) {
@@ -786,7 +787,7 @@ if (EXTRACT) {
 
   log(`\nExtracted ${extractedCount} upload(s) to ${FILES_DIR}/${extractFailed > 0 ? `, ${extractFailed} failed` : ''}`)
   if (extractedCount > 0) {
-    log(`Your files are under ${FILES_DIR}/<space>/<upload-cid>/`)
+    log(`Your files are under ${FILES_DIR}/<space>/ (one directory or file per upload).`)
   }
 }
 
