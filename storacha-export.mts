@@ -641,28 +641,48 @@ async function worker(id: number) {
     const rootCid = upload.root_cid
     const shards = getShards.all(rootCid) as Array<{ location_url: string; shard_order: number }>
 
-    // Skip if already downloaded
-    const firstShard = path.join(OUTPUT_DIR, `${rootCid}.shard-0.car`)
-    if (fs.existsSync(firstShard)) {
-      markDone.run(0, rootCid)
+    // Legacy single-CAR layout (predates shard-N naming): an old run
+    // may have left <root>.car. Treat as already on disk.
+    const legacyPath = path.join(OUTPUT_DIR, `${rootCid}.car`)
+    if (fs.existsSync(legacyPath)) {
+      markDone.run(fs.statSync(legacyPath).size, rootCid)
+      downloaded++
+      continue
+    }
+
+    // Standard layout: <root>.shard-N.car for N in 0..shards.length-1.
+    // Skip only when every expected shard is present; otherwise fetch
+    // just the missing ones.
+    const shardsOnDisk = shards.map(s => ({
+      ...s,
+      filename: `${rootCid}.shard-${s.shard_order}.car`,
+      filePath: path.join(OUTPUT_DIR, `${rootCid}.shard-${s.shard_order}.car`),
+    }))
+    const existingShards = shardsOnDisk.filter(s => fs.existsSync(s.filePath))
+    const missingShards = shardsOnDisk.filter(s => !fs.existsSync(s.filePath))
+
+    if (missingShards.length === 0) {
+      const sizeOnDisk = existingShards.reduce((sum, s) => sum + fs.statSync(s.filePath).size, 0)
+      markDone.run(sizeOnDisk, rootCid)
       downloaded++
       continue
     }
 
     try {
-      let uploadBytes = 0
+      let uploadBytes = existingShards.reduce((sum, s) => sum + fs.statSync(s.filePath).size, 0)
       const t0 = Date.now()
-      for (const shard of shards) {
+      if (existingShards.length > 0) {
+        log(`[${id}]   ${rootCid.slice(0, 24)}... ${existingShards.length}/${shards.length} shards on disk, fetching ${missingShards.length} missing`)
+      }
+      for (const shard of missingShards) {
         const shardStart = Date.now()
         const res = await fetch(shard.location_url, { dispatcher: fetchAgent } as any)
         if (!res.ok) throw new Error(`HTTP ${res.status}`)
         const carBytes = new Uint8Array(await res.arrayBuffer())
         uploadBytes += carBytes.length
 
-        const filename = `${rootCid}.shard-${shard.shard_order}.car`
-        const filePath = path.join(OUTPUT_DIR, filename)
-        fs.writeFileSync(filePath, carBytes)
-        insertFile.run(rootCid, shard.shard_order, filename, carBytes.length)
+        fs.writeFileSync(shard.filePath, carBytes)
+        insertFile.run(rootCid, shard.shard_order, shard.filename, carBytes.length)
 
         // Per-shard progress for multi-shard uploads — silence between
         // start and finish on big uploads (10s of GB) made users think
@@ -675,9 +695,10 @@ async function worker(id: number) {
       }
       markDone.run(uploadBytes, rootCid)
       downloaded++
-      totalBytes += uploadBytes
+      const fetchedBytes = missingShards.reduce((sum, s) => sum + (fs.existsSync(s.filePath) ? fs.statSync(s.filePath).size : 0), 0)
+      totalBytes += fetchedBytes
       const totalElapsed = (Date.now() - t0) / 1000
-      const avgRate = totalElapsed > 0 ? uploadBytes / totalElapsed : 0
+      const avgRate = totalElapsed > 0 ? fetchedBytes / totalElapsed : 0
       log(`[${id}] ✓ ${rootCid.slice(0, 24)}... ${shards.length} shards ${formatBytes(uploadBytes)} (avg ${formatBytes(avgRate)}/s) [${downloaded}/${pending.length}]`)
     } catch (err: any) {
       markError.run(rootCid)
@@ -718,6 +739,11 @@ if (EXTRACT) {
       if (!fs.existsSync(p)) break
       shardPaths.push(p)
       i++
+    }
+    // Legacy single-CAR layout: <root>.car without shard suffix.
+    if (shardPaths.length === 0) {
+      const legacyPath = path.join(OUTPUT_DIR, `${u.root_cid}.car`)
+      if (fs.existsSync(legacyPath)) shardPaths.push(legacyPath)
     }
     if (shardPaths.length === 0) {
       log(`  (no shards on disk for ${u.root_cid.slice(0, 24)}..., skipping)`)
