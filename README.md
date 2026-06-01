@@ -1,6 +1,6 @@
 # storacha-export
 
-**Rescue your data out of Storacha (web3.storage) before shutdown.** Downloads every upload from your Storacha spaces and reconstructs the original directory tree on your disk.
+**Rescue your data out of Storacha (web3.storage) before the 2026-05-31 shutdown.** Downloads every upload from your Storacha spaces and reconstructs the original directory tree on your disk.
 
 ## Quick start
 
