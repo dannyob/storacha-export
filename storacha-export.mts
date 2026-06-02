@@ -34,7 +34,8 @@ Options:
   --all               Download every space (without this, --space is required)
   --extract           After download, extract files to ./files/<space>/<root>/
   --output PATH       Directory for shard CAR files (default: ./cars)
-  --concurrency N     Parallel shard downloads (default: 3)
+  --concurrency N     Parallel uploads in flight (default: 3)
+  --shard-concurrency N  Parallel shard fetches within one upload (default: 4)
   --db PATH           SQLite progress DB (default: ./storacha-export.db)
   --list-spaces       Print spaces and exit
   --login EMAIL       Log in via email link, save credentials, exit
@@ -48,7 +49,7 @@ First-time setup:
 `
 
 const args = process.argv.slice(2)
-const FLAGS_WITH_VALUE = new Set(['--output', '--space', '--concurrency', '--db', '--login'])
+const FLAGS_WITH_VALUE = new Set(['--output', '--space', '--concurrency', '--shard-concurrency', '--db', '--login'])
 const BOOLEAN_FLAGS = new Set(['--list-spaces', '--extract', '--all', '-h', '--help'])
 
 if (args.includes('-h') || args.includes('--help')) {
@@ -90,6 +91,7 @@ function arg(name: string, def: string): string {
 const OUTPUT_DIR = arg('output', './cars')
 const SPACE_FILTER = arg('space', '')
 const CONCURRENCY = parseInt(arg('concurrency', '3'), 10)
+const SHARD_CONCURRENCY = parseInt(arg('shard-concurrency', '4'), 10)
 const DB_PATH = arg('db', './storacha-export.db')
 const LIST_SPACES = args.includes('--list-spaces')
 const LOGIN_EMAIL = arg('login', '')
@@ -676,25 +678,39 @@ async function worker(id: number) {
       if (existingShards.length > 0) {
         log(`[${id}]   ${rootCid.slice(0, 24)}... ${existingShards.length}/${shards.length} shards on disk, fetching ${missingShards.length} missing`)
       }
-      for (const shard of missingShards) {
-        const shardStart = Date.now()
-        const res = await fetch(shard.location_url, { dispatcher: fetchAgent } as any)
-        if (!res.ok) throw new Error(`HTTP ${res.status}`)
-        const carBytes = new Uint8Array(await res.arrayBuffer())
-        uploadBytes += carBytes.length
 
-        fs.writeFileSync(shard.filePath, carBytes)
-        insertFile.run(rootCid, shard.shard_order, shard.filename, carBytes.length)
-
-        // Per-shard progress for multi-shard uploads — silence between
-        // start and finish on big uploads (10s of GB) made users think
-        // the script had hung.
-        if (shards.length > 1) {
-          const elapsed = (Date.now() - shardStart) / 1000
-          const rate = elapsed > 0 ? carBytes.length / elapsed : 0
-          log(`[${id}]   shard ${shard.shard_order + 1}/${shards.length} ${formatBytes(carBytes.length)} in ${elapsed.toFixed(1)}s (${formatBytes(rate)}/s)`)
+      // Fetch missing shards in parallel — for big multi-shard uploads
+      // (e.g. MIT's 5942) a single-stream sequential loop is the
+      // bottleneck, not the network or disk. Bail all workers on first
+      // error.
+      let shardIdx = 0
+      let abortErr: Error | null = null
+      const workers = Math.max(1, Math.min(SHARD_CONCURRENCY, missingShards.length))
+      await Promise.all(Array.from({ length: workers }, async () => {
+        while (true) {
+          if (abortErr) return
+          const i = shardIdx++
+          if (i >= missingShards.length) return
+          const shard = missingShards[i]
+          try {
+            const shardStart = Date.now()
+            const res = await fetch(shard.location_url, { dispatcher: fetchAgent } as any)
+            if (!res.ok) throw new Error(`HTTP ${res.status}`)
+            const carBytes = new Uint8Array(await res.arrayBuffer())
+            uploadBytes += carBytes.length
+            fs.writeFileSync(shard.filePath, carBytes)
+            insertFile.run(rootCid, shard.shard_order, shard.filename, carBytes.length)
+            if (shards.length > 1) {
+              const elapsed = (Date.now() - shardStart) / 1000
+              const rate = elapsed > 0 ? carBytes.length / elapsed : 0
+              log(`[${id}]   shard ${shard.shard_order + 1}/${shards.length} ${formatBytes(carBytes.length)} in ${elapsed.toFixed(1)}s (${formatBytes(rate)}/s)`)
+            }
+          } catch (e: any) {
+            abortErr = e
+            throw e
+          }
         }
-      }
+      }))
       markDone.run(uploadBytes, rootCid)
       downloaded++
       const fetchedBytes = missingShards.reduce((sum, s) => sum + (fs.existsSync(s.filePath) ? fs.statSync(s.filePath).size : 0), 0)
