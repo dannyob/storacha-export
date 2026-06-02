@@ -645,8 +645,10 @@ async function worker(id: number) {
     // may have left <root>.car. Treat as already on disk.
     const legacyPath = path.join(OUTPUT_DIR, `${rootCid}.car`)
     if (fs.existsSync(legacyPath)) {
-      markDone.run(fs.statSync(legacyPath).size, rootCid)
+      const legacySize = fs.statSync(legacyPath).size
+      markDone.run(legacySize, rootCid)
       downloaded++
+      log(`[${id}] ✓ ${rootCid.slice(0, 24)}... legacy <root>.car on disk (${formatBytes(legacySize)}) [${downloaded}/${pending.length}]`)
       continue
     }
 
@@ -740,11 +742,12 @@ if (EXTRACT) {
       shardPaths.push(p)
       i++
     }
-    // Legacy single-CAR layout: <root>.car without shard suffix.
-    if (shardPaths.length === 0) {
-      const legacyPath = path.join(OUTPUT_DIR, `${u.root_cid}.car`)
-      if (fs.existsSync(legacyPath)) shardPaths.push(legacyPath)
-    }
+    // Legacy single-CAR layout: <root>.car. Always include if present;
+    // car-to-tar reads all inputs into a content-addressed Map so any
+    // overlap with the shard set dedupes naturally, and the legacy
+    // file fills gaps when the shard set is incomplete.
+    const legacyExtractPath = path.join(OUTPUT_DIR, `${u.root_cid}.car`)
+    if (fs.existsSync(legacyExtractPath)) shardPaths.push(legacyExtractPath)
     if (shardPaths.length === 0) {
       log(`  (no shards on disk for ${u.root_cid.slice(0, 24)}..., skipping)`)
       continue
