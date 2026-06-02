@@ -681,8 +681,10 @@ async function worker(id: number) {
 
       // Fetch missing shards in parallel — for big multi-shard uploads
       // (e.g. MIT's 5942) a single-stream sequential loop is the
-      // bottleneck, not the network or disk. Bail all workers on first
-      // error.
+      // bottleneck, not the network or disk. Each shard gets 3
+      // attempts with backoff before its failure aborts the upload;
+      // without retry, one transient blip in 5000+ shards kills the
+      // whole thing (which is how MIT's first run died at 60%).
       let shardIdx = 0
       let abortErr: Error | null = null
       const workers = Math.max(1, Math.min(SHARD_CONCURRENCY, missingShards.length))
@@ -692,22 +694,34 @@ async function worker(id: number) {
           const i = shardIdx++
           if (i >= missingShards.length) return
           const shard = missingShards[i]
-          try {
-            const shardStart = Date.now()
-            const res = await fetch(shard.location_url, { dispatcher: fetchAgent } as any)
-            if (!res.ok) throw new Error(`HTTP ${res.status}`)
-            const carBytes = new Uint8Array(await res.arrayBuffer())
-            uploadBytes += carBytes.length
-            fs.writeFileSync(shard.filePath, carBytes)
-            insertFile.run(rootCid, shard.shard_order, shard.filename, carBytes.length)
-            if (shards.length > 1) {
-              const elapsed = (Date.now() - shardStart) / 1000
-              const rate = elapsed > 0 ? carBytes.length / elapsed : 0
-              log(`[${id}]   shard ${shard.shard_order + 1}/${shards.length} ${formatBytes(carBytes.length)} in ${elapsed.toFixed(1)}s (${formatBytes(rate)}/s)`)
+          const shardStart = Date.now()
+          let carBytes: Uint8Array | null = null
+          let lastErr: Error | null = null
+          for (let attempt = 1; attempt <= 3; attempt++) {
+            try {
+              const res = await fetch(shard.location_url, { dispatcher: fetchAgent } as any)
+              if (!res.ok) throw new Error(`HTTP ${res.status}`)
+              carBytes = new Uint8Array(await res.arrayBuffer())
+              break
+            } catch (e: any) {
+              lastErr = e
+              if (attempt < 3) {
+                log(`[${id}]   shard ${shard.shard_order + 1}/${shards.length} attempt ${attempt} failed (${e.message}), retrying`)
+                await new Promise(r => setTimeout(r, 2000 * attempt))
+              }
             }
-          } catch (e: any) {
-            abortErr = e
-            throw e
+          }
+          if (!carBytes) {
+            abortErr = lastErr ?? new Error('fetch failed')
+            throw abortErr
+          }
+          uploadBytes += carBytes.length
+          fs.writeFileSync(shard.filePath, carBytes)
+          insertFile.run(rootCid, shard.shard_order, shard.filename, carBytes.length)
+          if (shards.length > 1) {
+            const elapsed = (Date.now() - shardStart) / 1000
+            const rate = elapsed > 0 ? carBytes.length / elapsed : 0
+            log(`[${id}]   shard ${shard.shard_order + 1}/${shards.length} ${formatBytes(carBytes.length)} in ${elapsed.toFixed(1)}s (${formatBytes(rate)}/s)`)
           }
         }
       }))
